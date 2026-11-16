@@ -1,0 +1,688 @@
+#!/usr/bin/env bash
+# check-opencode-adapter.sh — deterministic checks for the OpenCode adapter surface.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT="$REPO_ROOT/skills/story-setup/references/opencode"
+TMP_DIR="$(mktemp -d)"
+SYNC_LOG="$TMP_DIR/sync.log"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+assert_file() { [ -f "$1" ] || fail "required file missing: $1"; }
+assert_dir() { [ -d "$1" ] || fail "required directory missing: $1"; }
+assert_grep() { grep -Eq "$1" "$2" || fail "$3 ($2)"; }
+
+cd "$REPO_ROOT"
+
+echo "OpenCode adapter check"
+echo "======================"
+echo "Repo: $REPO_ROOT"
+
+assert_dir "$ROOT"
+assert_file "$ROOT/AGENTS.md.tmpl"
+assert_file "$ROOT/plugin.ts"
+assert_file "$ROOT/story_hook_core.js"
+assert_dir "$ROOT/agents"
+assert_dir "$ROOT/commands"
+assert_file "scripts/sync-opencode.py"
+
+# Snapshot the generated surface so --check itself is held to its read-only contract,
+# including when a developer already has unrelated worktree changes.
+cp -R "$ROOT" "$TMP_DIR/opencode-before"
+if ! python3 scripts/sync-opencode.py --check >"$SYNC_LOG" 2>&1; then
+  cat "$SYNC_LOG" >&2 || true
+  echo "::error::OpenCode templates are out of sync with Claude Code templates." >&2
+  echo "::error::Run 'python3 scripts/sync-opencode.py' locally and commit the changes." >&2
+  exit 1
+fi
+diff -qr "$TMP_DIR/opencode-before" "$ROOT" >/dev/null \
+  || fail "sync-opencode.py --check modified generated files"
+
+echo "  OK generated OpenCode templates are in sync (--check stayed read-only)"
+
+python3 - "scripts/sync-opencode.py" "$TMP_DIR" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+script_path = Path(sys.argv[1]).resolve()
+tmp = Path(sys.argv[2]) / "opencode-transaction"
+spec = importlib.util.spec_from_file_location("sync_opencode", script_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+src = tmp / "skills/story-setup/references/templates/agents"
+templates = src.parent
+dst_root = tmp / "skills/story-setup/references/opencode"
+dst = dst_root / "agents"
+src.mkdir(parents=True)
+dst.mkdir(parents=True)
+(templates / "CLAUDE.md.tmpl").write_text("valid instructions\n", encoding="utf-8")
+(src / "a.md").write_text(
+    "---\nname: a\ndescription: valid first fixture\ntools: [Read]\n---\nbody\n",
+    encoding="utf-8",
+)
+(src / "b.md").write_text("missing frontmatter\n", encoding="utf-8")
+(dst / "a.md").write_text("keep old a\n", encoding="utf-8")
+(dst / "sentinel.md").write_text("keep sentinel\n", encoding="utf-8")
+before = {path.name: path.read_bytes() for path in dst.iterdir()}
+module.ROOT = tmp
+old_argv = sys.argv
+sys.argv = [str(script_path)]
+try:
+    module.main()
+except ValueError:
+    pass
+else:
+    raise SystemExit("sync-opencode must reject malformed agent source")
+finally:
+    sys.argv = old_argv
+after = {path.name: path.read_bytes() for path in dst.iterdir()}
+if after != before:
+    raise SystemExit("sync-opencode modified destination before validating all sources")
+PY
+
+echo "  OK malformed source cannot partially update generated agents"
+
+python3 - "scripts/sync-opencode.py" "$TMP_DIR" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+script_path = Path(sys.argv[1]).resolve()
+tmp = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("sync_opencode_atomic", script_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+
+def snapshot(root: Path) -> dict[str, tuple[str, bytes]]:
+    result = {}
+    if not root.exists():
+        return result
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            result[rel] = ("symlink", str(path.readlink()).encode())
+        elif path.is_dir():
+            result[rel] = ("dir", b"")
+        else:
+            result[rel] = ("file", path.read_bytes())
+    return result
+
+
+def write_agent(path: Path, name: str) -> None:
+    path.write_text(
+        f"---\nname: {name}\ndescription: valid {name} fixture\ntools: [Read]\n---\n{name} body\n",
+        encoding="utf-8",
+    )
+
+
+def run_normal(root: Path) -> None:
+    old_root, old_argv = module.ROOT, sys.argv
+    module.ROOT = root
+    sys.argv = [str(script_path)]
+    try:
+        module.main()
+    finally:
+        module.ROOT = old_root
+        sys.argv = old_argv
+
+
+# Cross-phase failure: valid agents followed by a missing CLAUDE.md.tmpl must
+# leave the entire OpenCode adapter tree byte-for-byte unchanged.
+missing_root = tmp / "opencode-missing-agents-template"
+missing_src = missing_root / "skills/story-setup/references/templates/agents"
+missing_dst = missing_root / "skills/story-setup/references/opencode"
+missing_src.mkdir(parents=True)
+(missing_dst / "agents").mkdir(parents=True)
+write_agent(missing_src / "a.md", "a")
+(missing_dst / "agents/a.md").write_text("keep old a\n", encoding="utf-8")
+(missing_dst / "plugin.ts").write_text("keep manual plugin\n", encoding="utf-8")
+before = snapshot(missing_dst)
+try:
+    run_normal(missing_root)
+except RuntimeError:
+    pass
+else:
+    raise SystemExit("sync-opencode must reject a missing CLAUDE.md.tmpl")
+if snapshot(missing_dst) != before:
+    raise SystemExit("sync-opencode partially updated agents before CLAUDE.md.tmpl validation")
+
+
+# Publication failure: b.md is deliberately a directory in the destination.
+# The failed second agent output must not expose the earlier a.md update or
+# mutate AGENTS.md.tmpl/manual OpenCode assets.
+write_root = tmp / "opencode-write-failure"
+write_src_root = write_root / "skills/story-setup/references/templates"
+write_src = write_src_root / "agents"
+write_dst = write_root / "skills/story-setup/references/opencode"
+write_src.mkdir(parents=True)
+(write_dst / "agents/b.md").mkdir(parents=True)
+write_agent(write_src / "a.md", "a")
+write_agent(write_src / "b.md", "b")
+(write_src_root / "CLAUDE.md.tmpl").write_text("new instructions\n", encoding="utf-8")
+(write_dst / "agents/a.md").write_text("keep old a\n", encoding="utf-8")
+(write_dst / "AGENTS.md.tmpl").write_text("keep old instructions\n", encoding="utf-8")
+(write_dst / "plugin.ts").write_text("keep manual plugin\n", encoding="utf-8")
+before = snapshot(write_dst)
+try:
+    run_normal(write_root)
+except (IsADirectoryError, OSError):
+    pass
+else:
+    raise SystemExit("sync-opencode must fail when a generated target is a directory")
+if snapshot(write_dst) != before:
+    raise SystemExit("sync-opencode exposed a partial adapter update after a write failure")
+
+
+# Fail the second os.replace after the first agent was committed. The normal
+# exception path must restore agents, AGENTS.md.tmpl, and manual assets.
+commit_dst = tmp / "opencode-commit-failure"
+(commit_dst / "agents").mkdir(parents=True)
+(commit_dst / "agents/a.md").write_text("old a\n", encoding="utf-8")
+(commit_dst / "agents/b.md").write_text("old b\n", encoding="utf-8")
+(commit_dst / "AGENTS.md.tmpl").write_text("old instructions\n", encoding="utf-8")
+(commit_dst / "plugin.ts").write_text("manual plugin\n", encoding="utf-8")
+before = snapshot(commit_dst)
+real_replace = module.os.replace
+calls = 0
+
+def fail_second_replace(src, dst):
+    global calls
+    calls += 1
+    if calls == 2:
+        raise OSError("injected second-commit failure")
+    return real_replace(src, dst)
+
+module.os.replace = fail_second_replace
+try:
+    module.publish_tree(
+        {"a.md": "new a\n", "b.md": "new b\n"},
+        "new instructions\n",
+        commit_dst,
+    )
+except OSError:
+    pass
+else:
+    raise SystemExit("sync-opencode did not surface injected commit failure")
+finally:
+    module.os.replace = real_replace
+if snapshot(commit_dst) != before:
+    raise SystemExit("sync-opencode failed to roll back an interrupted commit")
+
+
+# A copied symlink at opencode/agents must never redirect staging writes into an
+# external/user directory.
+link_root = tmp / "opencode-symlink-parent"
+link_src_root = link_root / "skills/story-setup/references/templates"
+link_src = link_src_root / "agents"
+link_dst = link_root / "skills/story-setup/references/opencode"
+external = tmp / "opencode-external"
+link_src.mkdir(parents=True)
+link_dst.mkdir(parents=True)
+external.mkdir()
+write_agent(link_src / "a.md", "a")
+(link_src_root / "CLAUDE.md.tmpl").write_text("instructions\n", encoding="utf-8")
+(external / "a.md").write_text("external sentinel\n", encoding="utf-8")
+(link_dst / "agents").symlink_to(external, target_is_directory=True)
+before_external = snapshot(external)
+try:
+    run_normal(link_root)
+except ValueError:
+    pass
+else:
+    raise SystemExit("sync-opencode must reject a symlinked agents directory")
+if snapshot(external) != before_external:
+    raise SystemExit("sync-opencode followed agents symlink and modified external files")
+PY
+
+echo "  OK OpenCode generated-file failures roll back without replacing the adapter root"
+
+# A stale generated agent that cannot be removed (immutable flag, lock, read-only
+# mount) must not abort the rollback: restorable files return to their prior
+# bytes, the un-removable file keeps its content, and manual assets stay put.
+python3 - "scripts/sync-opencode.py" "$TMP_DIR" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+script_path = Path(sys.argv[1]).resolve()
+root = Path(sys.argv[2]) / "opencode-immutable-stale"
+agents = root / "agents"
+agents.mkdir(parents=True)
+(agents / "a.md").write_text("old a\n", encoding="utf-8")
+(agents / "stale.md").write_text("old stale\n", encoding="utf-8")
+(root / "AGENTS.md.tmpl").write_text("old instructions\n", encoding="utf-8")
+(root / "plugin.ts").write_text("manual plugin\n", encoding="utf-8")
+
+
+def snap() -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+before = snap()
+spec = importlib.util.spec_from_file_location("sync_opencode_immutable", script_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+real_unlink = Path.unlink
+real_copy2 = module.shutil.copy2
+# Key the fault on the file's OWN path, not its name: a real immutable file
+# still allows being read/copied into the backup dir, so only writes and unlinks
+# targeting stale.md itself must fail. Keying on the name would also block the
+# backup copy and abort before the rollback path is ever exercised.
+victim = (agents / "stale.md").resolve()
+
+
+def blocked_unlink(self, *args, **kwargs):
+    if self.resolve() == victim:
+        raise PermissionError("simulated immutable stale file")
+    return real_unlink(self, *args, **kwargs)
+
+
+def blocked_copy2(src, dst, *args, **kwargs):
+    if Path(dst).resolve() == victim:
+        raise PermissionError("simulated immutable stale file")
+    return real_copy2(src, dst, *args, **kwargs)
+
+
+Path.unlink = blocked_unlink
+module.shutil.copy2 = blocked_copy2
+try:
+    module.publish_tree({"a.md": "new a\n"}, "new instructions\n", root)
+except PermissionError:
+    pass
+else:
+    raise SystemExit("sync-opencode did not surface the un-removable stale file")
+finally:
+    Path.unlink = real_unlink
+    module.shutil.copy2 = real_copy2
+after = snap()
+if after != before:
+    raise SystemExit(
+        f"sync-opencode rollback left a partial update past an un-removable file: {before} -> {after}"
+    )
+PY
+
+echo "  OK OpenCode rollback survives an un-removable stale agent file"
+
+python3 - <<'PY'
+from pathlib import Path
+expected = {
+    'chapter-extractor', 'character-designer', 'consistency-checker',
+    'narrative-writer', 'story-architect', 'story-explorer', 'story-researcher',
+}
+base = Path('skills/story-setup/references/opencode/agents')
+found = {p.stem for p in base.glob('*.md')}
+assert found == expected, found
+
+# 各 agent 的工具可用性（含未列出工具一律摘除）由下方 whollyDisabled 裁决矩阵锁。
+for p in sorted(base.glob('*.md')):
+    text = p.read_text()
+    assert text.startswith('---\n'), f'{p}: missing frontmatter'
+    try:
+        fm = text.split('---', 2)[1]
+    except IndexError:
+        raise AssertionError(f'{p}: malformed frontmatter')
+    assert 'mode: subagent' in fm, f'{p}: missing mode: subagent'
+    assert 'description:' in fm, f'{p}: missing description'
+    assert '\npermission:' not in fm, f'{p}: legacy 1.x permission map'
+    assert 'steps:' in fm, f'{p}: missing steps limit'
+    assert '.claude/skills/story-setup/references/agent-references/' not in text, f'{p}: leaked Claude reference path'
+    assert '.opencode/skills/story-setup/references/agent-references/' not in text, f'{p}: stale hidden OpenCode reference fallback'
+    if p.stem in {'character-designer', 'consistency-checker', 'narrative-writer', 'story-architect'}:
+        assert '{项目根}/skills/story-setup/references/agent-references/' in text, f'{p}: missing canonical OpenCode reference path'
+PY
+
+echo "  OK agent templates"
+
+# frontmatter 解析必须锚定独占一行的 `---`（值里的三连字符不得截断 permissions/steps），
+# 且 disallowedTools 里的 Bash 必须落成整条 shell deny：OpenCode 未声明 shell 权限时默认允许，
+# 只有 edit deny 的只读 agent 仍能借 shell 重定向写正文。不给任何“只读命令”例外：命令级
+# 白名单挡不住 `( allowlisted-command ) > 正文.md` 这类外层重定向，只有整条 deny 能让运行时
+# 把 shell 工具从清单里摘掉。
+python3 - "scripts/sync-opencode.py" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+script_path = Path(sys.argv[1]).resolve()
+spec = importlib.util.spec_from_file_location("sync_opencode_permissions", script_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+source = (
+    "---\nname: a\ndescription: |\n  只读 agent --- 7 Gate。\n"
+    "tools: [Read, Glob, Grep]\ndisallowedTools: [Write, Edit, Bash]\nmaxTurns: 9\n"
+    "# 备注 --- 与主 skill 平级\n---\nbody\n"
+)
+fm, body = module.parse_frontmatter(source)
+missing = {'name', 'description', 'tools', 'disallowedTools', 'maxTurns'} - set(fm)
+assert not missing, f'frontmatter truncated at an inline ---: missing {missing}'
+assert body.strip() == 'body', body
+
+# 正文是授权的唯一依据，所以 body 是必传参数：给它一个默认值就等于「忘了传 = 悄悄改权限」。
+try:
+    module.convert_claude_to_opencode(fm)
+except TypeError:
+    pass
+else:
+    raise AssertionError('convert_claude_to_opencode must require the agent body (no default)')
+
+# 只读 agent 的正文若要求执行命令，生成器必须大声失败，而不是暗开 shell 例外。
+try:
+    module.convert_claude_to_opencode(
+        fm, '**确定项目根目录：** 执行 `git rev-parse --show-toplevel`，失败则用当前工作目录。\n'
+    )
+except ValueError as error:
+    assert 'git rev-parse --show-toplevel' in str(error), error
+else:
+    raise AssertionError('restricted agent instructions must not require Bash')
+
+# 正文没提该命令 → 一条都不放（整条 deny 让运行时把 shell 工具整个摘掉）
+plain = module.convert_claude_to_opencode(fm, '只读 agent，正文没有任何 shell 步骤\n')
+assert plain['permissions']['shell'] == 'deny', (
+    f'read-only agent whose body never asks for a command must get a plain shell deny: {plain}'
+)
+
+# 生成器必须**大声失败**，而不是默默产出一个跑不动或被撬开的 agent。
+# 正文要求任何 shell 命令 → 生成必须中断并点名该命令
+try:
+    module.convert_claude_to_opencode(fm, '**准备环境：** 执行 `npm install`，然后开始检查。\n')
+except ValueError as error:
+    assert 'npm install' in str(error), error
+else:
+    raise AssertionError('generator must fail loudly when the body needs an ungranted command')
+
+
+def rules_in_file_order(fm_text: str):
+    """按**文件里的书写顺序**取 permissions 规则——顺序就是优先级，不能走 dict/set。"""
+    import re
+    return re.findall(r'^  - action: "?([^"\n]+)"?\n    resource: "?([^"\n]+)"?\n    effect: (\S+)$', fm_text, re.M)
+
+
+# format_frontmatter 不得对规则排序：一排序，生成器里「宽 deny 在前、窄 allow 在后」的
+# 顺序就被静默抹掉。用逆字母序的插入顺序探它。
+probe = {'permissions': {'zzz': 'deny', '*': 'deny', 'aaa': 'allow'}}
+probe_rules = rules_in_file_order(module.format_frontmatter(probe))
+assert probe_rules == [('zzz', '*', 'deny'), ('*', '*', 'deny'), ('aaa', '*', 'allow')], (
+    f'format_frontmatter reordered permission rules (must preserve dict order): {probe_rules}'
+)
+
+# 生成器自身的输出：只读 agent 的 shell 必须是整条 deny。
+generated_rules = rules_in_file_order(module.format_frontmatter(plain))
+assert ('shell', '*', 'deny') in generated_rules, generated_rules
+PY
+
+echo "  OK generator makes read-only Bash unavailable and rejects contradictory instructions"
+
+# 生成产物的**裁决矩阵**。这里独立复刻上游 OpenCode 2.x 的判定，刻意不复用 sync-opencode.py
+# 里的解析——复用的话，复刻本身写错时测试会跟着一起错：
+#   core/src/tool.ts   whollyDisabled()：取最后一条 action 命中的规则，resource 为 * 且 deny 时
+#                      把工具整个摘出发给模型的清单；write/edit/patch 共用 action edit
+#   util/wildcard.ts   match()
+# 运行时的真实判定由 test-agent-permissions.py --opencode 在真 CLI 上覆盖；这里是无 CLI 时的静态网。
+python3 - <<'PY'
+import re
+from pathlib import Path
+
+
+def wildcard_match(value: str, pattern: str) -> bool:
+    escaped = re.sub(r'[.+^${}()|\[\]\\]', r'\\\g<0>', pattern)
+    escaped = escaped.replace('*', '.*').replace('?', '.')
+    return re.match('^' + escaped + '$', value, flags=re.DOTALL) is not None
+
+
+def wholly_disabled(action: str, rules) -> bool:
+    matched = [rule for rule in rules if wildcard_match(action, rule[0])]
+    return bool(matched) and matched[-1][1] == '*' and matched[-1][2] == 'deny'
+
+
+def rules_in_file_order(fm_text: str):
+    return re.findall(r'^  - action: "?([^"\n]+)"?\n    resource: "?([^"\n]+)"?\n    effect: (\S+)$', fm_text, re.M)
+
+
+# 工具 → 它在权限里对应的 action（工具的 options.permission，缺省为工具名）
+TOOL_ACTION = {
+    'read': 'read', 'glob': 'glob', 'grep': 'grep',
+    'write': 'edit', 'edit': 'edit', 'patch': 'edit',
+    'shell': 'shell', 'subagent': 'subagent', 'webfetch': 'webfetch', 'websearch': 'websearch',
+    'skill': 'skill', 'question': 'question', 'execute': 'execute',
+    # 本表没列出的工具（上游日后新增的也算）：只有开头那条整条 deny 能把它摘掉。
+    'unlisted-future-tool': 'unlisted-future-tool',
+}
+READ_LIKE = {'read', 'glob', 'grep'}
+read_only = {'consistency-checker', 'story-explorer'}  # chapter-extractor 写批次输入文件，不再只读
+shell_agents = {'narrative-writer', 'story-researcher'}
+base = Path('skills/story-setup/references/opencode/agents')
+for path in sorted(base.glob('*.md')):
+    name = path.stem
+    rules = rules_in_file_order(path.read_text(encoding='utf-8').split('\n---\n', 1)[0])
+    available = {tool for tool, action in TOOL_ACTION.items() if not wholly_disabled(action, rules)}
+    expected = set(READ_LIKE)
+    if name not in read_only:
+        expected |= {'write', 'edit', 'patch'}
+    if name in shell_agents:
+        expected |= {'shell'}
+    assert available == expected, (
+        f'{name}: tools left for the model {sorted(available)} != {sorted(expected)}'
+        f'（rules in file order: {rules}）'
+    )
+PY
+
+echo "  OK generated permissions leave each agent exactly its capability tools (2.x whollyDisabled)"
+
+# chapter-extractor 在 Claude 端靠内联 hook（analysis-input-guard）只写批次输入文件；OpenCode 没有
+# 单 agent hook，靠 edit 路径规则收窄。独立复刻 2.x permission.ts evaluate()：取最后一条 action 与
+# resource 都命中的规则；resource 是相对会话目录的路径（file-access.ts resolve）。
+python3 - <<'PY'
+import re
+from pathlib import Path
+
+
+def wildcard_match(value: str, pattern: str) -> bool:
+    escaped = re.sub(r'[.+^${}()|\[\]\\]', r'\\\g<0>', pattern)
+    escaped = escaped.replace('*', '.*').replace('?', '.')
+    return re.match('^' + escaped + '$', value, flags=re.DOTALL) is not None
+
+
+def evaluate(action: str, resource: str, rules) -> str:
+    matched = [rule for rule in rules if wildcard_match(action, rule[0]) and wildcard_match(resource, rule[1])]
+    return matched[-1][2] if matched else 'ask'
+
+
+def rules_of(name: str):
+    text = Path(f'skills/story-setup/references/opencode/agents/{name}.md').read_text(encoding='utf-8')
+    return re.findall(r'^  - action: "?([^"\n]+)"?\n    resource: "?([^"\n]+)"?\n    effect: (\S+)$',
+                      text.split('\n---\n', 1)[0], re.M)
+
+
+extractor = rules_of('chapter-extractor')
+# * 在 2.x Wildcard.match 里编成 .*（s 旗标），可跨多层目录（本机 opencode 二进制内 Wildcard.match 核对过）。
+for path in ('拆文库/书/_analysis_cache/输入-RAW-4-6.md', '拆文库/书/_analysis_cache/输入-REUSE-1-3.md',
+             '_analysis_cache/输入-RAW-1-3.md', '作品/拆文库/书/_analysis_cache/输入-RAW-7-9.md'):
+    assert evaluate('edit', path, extractor) == 'allow', (path, extractor)
+for path in ('拆文库/书/章节/第4章_摘要.md', '拆文库/书/_analysis_cache/批次-RAW-4-6.md',
+             '拆文库/书/_progress.md', 'book/正文/第1章.md', '拆文库/书/_analysis_cache/输入.md'):
+    assert evaluate('edit', path, extractor) == 'deny', (path, extractor)
+for name in ('character-designer', 'narrative-writer', 'story-architect'):
+    assert evaluate('edit', 'book/正文/第1章.md', rules_of(name)) == 'allow', name
+PY
+
+echo "  OK chapter-extractor may only edit _analysis_cache/输入-{RAW|REUSE}-*.md (2.x evaluate)"
+
+# 守卫名解析必须 fail closed：frontmatter 挂了 Write/Edit 的 PreToolUse hook 却认不出守卫名
+# （命令写法变了），生成要报错，不能当成没挂守卫、给 agent 放开整个工作区的 edit。
+python3 - "scripts/sync-opencode.py" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("sync_opencode_guard", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def frontmatter(command: str, matcher: str = "Write|Edit") -> str:
+    return ("---\nname: x\ntools: [Read, Write, Edit]\nhooks:\n  PreToolUse:\n"
+            f"    - matcher: \"{matcher}\"\n      hooks:\n        - type: command\n"
+            f"          command: {command}\n---\n\n正文\n")
+
+known = 'node "$CLAUDE_PROJECT_DIR"/.claude/hooks/story_hook_cli.js analysis-input-guard'
+assert module.frontmatter_write_guard(frontmatter(known)) == "analysis-input-guard"
+for command in ('node "$CLAUDE_PROJECT_DIR/.claude/hooks/story_hook_cli.js" analysis-input-guard',
+                'bash "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-analysis-input.sh'):
+    for matcher in ("Write|Edit", "Edit", "Write"):
+        try:
+            module.frontmatter_write_guard(frontmatter(command, matcher))
+        except ValueError:
+            continue
+        raise AssertionError(f"unrecognized write-guard hook must fail closed: {matcher} / {command}")
+# CRLF 模板照样认出守卫名；认不出时同样 fail closed，不因 `\n---\n` 找不到而当成没挂 hook。
+assert module.frontmatter_write_guard(frontmatter(known).replace("\n", "\r\n")) == "analysis-input-guard"
+unknown = 'bash "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-analysis-input.sh'
+# matcher 写成 `*`/留空/整段不写都覆盖 Write/Edit；CRLF 下同理。
+cases = [frontmatter(unknown, "*"), frontmatter(unknown, ""), frontmatter(unknown).replace("\r\n", "\n").replace("\n", "\r\n"),
+         frontmatter(unknown, "*").replace("\n", "\r\n"),
+         frontmatter(unknown).replace('    - matcher: "Write|Edit"\n', "    -\n")]
+for text in cases:
+    try:
+        module.frontmatter_write_guard(text)
+    except ValueError:
+        continue
+    raise AssertionError(f"write hook with wildcard/CRLF matcher must fail closed: {text!r}")
+# 只挂非写入 matcher（如 Bash）的 hook 与没有 hook 的 agent 不受影响。
+assert module.frontmatter_write_guard(frontmatter('bash x.sh', "Bash")) is None
+assert module.frontmatter_write_guard("---\nname: x\ntools: [Read]\n---\n\n正文\n") is None
+PY
+
+echo "  OK unrecognized Write/Edit hook in agent frontmatter fails generation (no silent edit allow)"
+
+# 生成必须幂等：跑两遍产物一致。否则 --check 会在无人改模板时随机报 out-of-sync。
+python3 - "scripts/sync-opencode.py" "$TMP_DIR" <<'PY'
+import contextlib
+import importlib.util
+import io
+import shutil
+import sys
+from pathlib import Path
+
+script_path = Path(sys.argv[1]).resolve()
+root = Path(sys.argv[2]) / "opencode-idempotent"
+spec = importlib.util.spec_from_file_location("sync_opencode_idempotent", script_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+src = Path("skills/story-setup/references")
+dst = root / "skills/story-setup/references"
+dst.mkdir(parents=True)
+shutil.copytree(src / "templates", dst / "templates")
+shutil.copytree(src / "opencode", dst / "opencode")
+
+
+def snapshot() -> dict[str, bytes]:
+    base = dst / "opencode"
+    return {
+        path.relative_to(base).as_posix(): path.read_bytes()
+        for path in sorted(base.rglob("*"))
+        if path.is_file()
+    }
+
+
+def run() -> None:
+    old_root, old_argv = module.ROOT, sys.argv
+    module.ROOT = root
+    sys.argv = [str(script_path)]
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            module.main()
+    finally:
+        module.ROOT, sys.argv = old_root, old_argv
+
+
+run()
+first = snapshot()
+run()
+second = snapshot()
+if first != second:
+    drift = sorted(key for key in set(first) | set(second) if first.get(key) != second.get(key))
+    raise SystemExit(f"sync-opencode.py is not idempotent; drifting files: {drift}")
+PY
+
+echo "  OK generation is idempotent (second run is byte-identical)"
+
+python3 - <<'PY'
+from pathlib import Path
+skill_names = {p.parent.name for p in Path('skills').glob('*/SKILL.md')}
+command_names = {p.stem for p in Path('skills/story-setup/references/opencode/commands').glob('*.md')}
+assert skill_names == command_names, f'missing={skill_names-command_names}, extra={command_names-skill_names}'
+for p in sorted(Path('skills/story-setup/references/opencode/commands').glob('*.md')):
+    text = p.read_text()
+    assert text.startswith('---\n'), f'{p}: missing frontmatter'
+    fm = text.split('---', 2)[1]
+    assert 'description:' in fm, f'{p}: missing description'
+    assert f'请使用 {p.stem} skill' in text, f'{p}: command body must route to same skill'
+    # OpenCode 只在模板不含 $ARGUMENTS 且不含 $1..$N 时才把用户参数追加到末尾，
+    # 这个回退行为官方文档没有写（opencode.ai/docs/commands 只描述占位符），
+    # 实测 1.14.32 会追加成一行裸文本。显式写占位符才与 ZCode 一致，也不依赖未文档化行为。
+    assert '$ARGUMENTS' in text, f'{p}: command template must place $ARGUMENTS explicitly'
+
+# 两个有 command 面的适配层保持一致，任一侧漏写都拦下来
+zcode_dir = Path('skills/story-setup/references/zcode/commands')
+if zcode_dir.is_dir():
+    zcode_names = {p.stem for p in zcode_dir.glob('*.md')}
+    assert zcode_names == command_names, f'opencode/zcode command sets differ: only_zcode={zcode_names-command_names}, only_opencode={command_names-zcode_names}'
+    for p in sorted(zcode_dir.glob('*.md')):
+        assert '$ARGUMENTS' in p.read_text(), f'{p}: command template must place $ARGUMENTS explicitly'
+PY
+
+echo "  OK slash command templates (含 \$ARGUMENTS 占位符与 ZCode 对齐)"
+
+# This job has no opencode CLI (the real load is asserted by test-opencode-cli-e2e.sh), so this is a
+# structural proxy: the deploy manifest must place the core under .opencode/plugins/lib/, never flat
+# in .opencode/plugins/ (a flat *.js there is auto-loaded by OpenCode as a broken second plugin).
+assert_grep '\.opencode/plugins/lib/story_hook_core\.js' "$REPO_ROOT/skills/story-setup/references/deploy-opencode.md" "OpenCode deploy manifest must target .opencode/plugins/lib/story_hook_core.js, not a flat .opencode/plugins/story_hook_core.js"
+# Version gate is fail-closed: on 1.x the plugin never loads and agents' `permissions:` rules are
+# ignored (read-only agents would get write/shell), so an unknown version must stop, not continue,
+# and a blocked OpenCode-only deploy must leave `.story-deployed` untouched.
+# story-setup 入口按宿主只读一份部署文件：入口路由到 deploy-opencode.md，版本门与模型配置写在那份里。
+assert_grep 'references/deploy-opencode\.md' "$REPO_ROOT/skills/story-setup/SKILL.md" "story-setup entry must route opencode to its deploy file"
+SETUP_MD="$REPO_ROOT/skills/story-setup/references/deploy-opencode.md"
+assert_grep '命令不可用或解析不出版本 → 同样停止 OpenCode 部署' "$SETUP_MD" "OpenCode version gate must stop when the version cannot be determined"
+assert_grep 'target 只有 opencode 则不写、不更新 `\.story-deployed`' "$SETUP_MD" "blocked OpenCode-only deploy must not write or bump .story-deployed"
+if grep -q '解析不出版本 → 继续部署' "$SETUP_MD"; then fail "OpenCode version gate must not continue on an unknown version"; fi
+# 模型缓存必须先于 .opencode/agents/ 的 replace，否则用户已配的 model: 被覆盖后再缓存为空。
+assert_grep '先缓存已有模型配置' "$SETUP_MD" "OpenCode deploy must cache existing agent models before replacing .opencode/agents/"
+# 选模型问作者时用角色名（拆书助手／写手／总指挥），内部 agent 名只进技术备注列。
+assert_grep '拆书助手' "$SETUP_MD" "OpenCode model questions must name roles the author understands"
+# 用 python 按字符匹配：C 区域下 grep 的 [^」] 是字节集，会误排除含同一字节的汉字而漏报。
+python3 - "$SETUP_MD" <<'PY' || fail "OpenCode model questions must not show internal agent names to the author"
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+internal = r"chapter-extractor|consistency-checker|story-explorer|story-researcher|character-designer|narrative-writer|story-architect"
+hits = [q for q in re.findall(r"「[^」]*」", text) if re.search(internal, q)]
+if hits:
+    print("internal agent names inside author-facing quotes: {}".format(hits), file=sys.stderr)
+    sys.exit(1)
+PY
+assert_grep 'permissions:` 规则列表' "$REPO_ROOT/skills/story-review/SKILL.md" "story-review must validate OpenCode 2.x agents by their permissions: list"
+# #242: runtime behavioral test — loads plugin.ts against the deployed core layout (lib/) and
+# exercises ctx.location, the execute.before/after and compaction hooks. The core's byte identity is
+# owned by check-shared-files.sh; its net/guard semantics by test-prose-net-parity.sh.
+node --experimental-strip-types scripts/test-opencode-plugin.mjs
+assert_grep 'AGENTS\.md|OpenCode' "$ROOT/AGENTS.md.tmpl" "OpenCode AGENTS template must be present"
+assert_grep 'story-long-write|story-short-write|story-review' "$ROOT/AGENTS.md.tmpl" "OpenCode AGENTS template must mention story skill routing"
+
+echo "  OK plugin behavior and instruction anchors"
+echo ""
+echo "OK: OpenCode adapter checks passed"

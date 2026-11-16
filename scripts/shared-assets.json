@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "name": "prose-ai-pattern-detector",
+      "source": "skills/story-deslop/scripts/check-ai-patterns.js",
+      "targets": [
+        "skills/story-long-write/scripts/check-ai-patterns.js",
+        "skills/story-review/scripts/check-ai-patterns.js",
+        "skills/story-short-write/scripts/check-ai-patterns.js"
+      ]
+    },
+    {
+      "name": "prose-outline-copy-detector",
+      "source": "skills/story-long-write/scripts/check-outline-copy.js",
+      "targets": [
+        "skills/story-short-write/scripts/check-outline-copy.js"
+      ]
+    },
+    {
+      "name": "prose-degeneration-detector",
+      "source": "skills/story-deslop/scripts/check-degeneration.js",
+      "targets": [
+        "skills/story-long-write/scripts/check-degeneration.js",
+        "skills/story-review/scripts/check-degeneration.js",
+        "skills/story-short-write/scripts/check-degeneration.js"
+      ]
+    },
+    {
+      "name": "prose-punctuation-normalizer",
+      "source": "skills/story-deslop/scripts/normalize-punctuation.js",
+      "targets": [
+        "skills/story-long-write/scripts/normalize-punctuation.js",
+        "skills/story-review/scripts/normalize-punctuation.js",
+        "skills/story-short-write/scripts/normalize-punctuation.js"
+      ]
+    },
+    {
+      "name": "story-tracking-transaction",
+      "source": "skills/story-long-write/scripts/tracking_commit.py",
+      "targets": [
+        "skills/story-import/scripts/tracking_commit.py",
+        "skills/story-review/scripts/tracking_commit.py"
+      ]
+    },
+    {
+      "name": "story-wordcount-core",
+      "source": "skills/story-long-write/scripts/wordcount_core.py",
+      "targets": [
+        "skills/story-import/scripts/wordcount_core.py",
+        "skills/story-review/scripts/wordcount_core.py"
+      ]
+    },
+    {
+      "name": "story-author-memory-transaction",
+      "source": "skills/story-long-write/scripts/author_memory_commit.py",
+      "targets": [
+        "skills/story-short-write/scripts/author_memory_commit.py"
+      ]
+    },
+    {
+      "name": "scan-cdp-utils",
+      "source": "skills/story-long-scan/scripts/cdp-utils.js",
+      "targets": [
+        "skills/story-short-scan/scripts/cdp-utils.js"
+      ]
+    },
+    {
+      "name": "scan-rank-aggregator",
+      "source": "skills/story-long-scan/scripts/aggregate-rank.js",
+      "targets": [
+        "skills/story-short-scan/scripts/aggregate-rank.js"
+      ]
+    },
+    {
+      "name": "story-hook-core",
+      "source": "skills/story-setup/references/templates/hooks/story_hook_core.js",
+      "targets": [
+        "skills/story-setup/references/antigravity/hooks/story_hook_core.js",
+        "skills/story-setup/references/opencode/story_hook_core.js",
+        "skills/story-setup/references/zcode/hooks/story_hook_core.js"
+      ]
+    },
+    {
+      "name": "outline-contract-verifier",
+      "source": "skills/story-long-write/scripts/check-outline-contract.js",
+      "targets": [
+        "skills/story-import/scripts/check-outline-contract.js"
+      ]
+    },
+    {
+      "name": "prose-style-whitelist",
+      "source": "skills/story-deslop/scripts/style-whitelist.js",
+      "targets": [
+        "skills/story-long-write/scripts/style-whitelist.js",
+        "skills/story-short-write/scripts/style-whitelist.js",
+        "skills/story-review/scripts/style-whitelist.js"
+      ]
+    },
+    {
+      "name": "outline-volume-view",
+      "source": "skills/story-long-write/scripts/outline_view.py",
+      "targets": [
+        "skills/story-import/scripts/outline_view.py"
+      ]
+    }
+  ]
+}

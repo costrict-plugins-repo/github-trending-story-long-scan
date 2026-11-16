@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "repository": "zenstory-ai/oh-story-claudecode",
+  "versionFiles": [
+    {
+      "path": "skills/story/VERSION",
+      "format": "text"
+    },
+    {
+      "path": ".claude-plugin/plugin.json",
+      "format": "json",
+      "pointer": "/version"
+    },
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "format": "json",
+      "pointer": "/metadata/version"
+    },
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "format": "json",
+      "pointer": "/plugins/0/version"
+    },
+    {
+      "path": ".zcode-plugin/plugin.json",
+      "format": "json",
+      "pointer": "/version"
+    },
+    {
+      "path": "marketplace.json",
+      "format": "json",
+      "pointer": "/plugins/0/version"
+    },
+    {
+      "path": "reasonix-plugin.json",
+      "format": "json",
+      "pointer": "/version"
+    }
+  ],
+  "changelog": "CHANGELOG.md",
+  "requiredPaths": [
+    "README.md",
+    "skills/browser-cdp/SKILL.md",
+    "skills/story-cover/SKILL.md",
+    "skills/story-deslop/SKILL.md",
+    "skills/story-import/SKILL.md",
+    "skills/story-long-analyze/SKILL.md",
+    "skills/story-long-scan/SKILL.md",
+    "skills/story-long-write/SKILL.md",
+    "skills/story-publish/SKILL.md",
+    "skills/story-review/SKILL.md",
+    "skills/story-setup/SKILL.md",
+    "skills/story-short-analyze/SKILL.md",
+    "skills/story-short-scan/SKILL.md",
+    "skills/story-short-write/SKILL.md",
+    "skills/story/SKILL.md",
+    "skills/story/VERSION",
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".agents/skills",
+    ".zcode-plugin/plugin.json",
+    "marketplace.json",
+    "reasonix-plugin.json"
+  ],
+  "excludePaths": [
+    ".agents/notes",
+    ".clawhub",
+    ".github",
+    ".release"
+  ],
+  "ciWorkflows": [
+    {
+      "file": "cross-platform.yml",
+      "jobs": [
+        "static-check",
+        "windows",
+        "macos"
+      ]
+    },
+    {
+      "file": "validate-clawhub.yml",
+      "jobs": [
+        "guard-central-ref",
+        "ClawHub inventory validation / distribute"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,561 @@
+{
+  "book_title": "让你管账号，你高燃混剪炸全网",
+  "characters": {
+    "吴伟": {
+      "abilities_resources": [],
+      "goal": "在法律追责下自保",
+      "identity": "账号被永久封禁的自媒体黑博主",
+      "knowledge": [
+        "自己的造谣视频和广告利益链已经成为追责证据"
+      ],
+      "location": "未明确",
+      "open_threads": [
+        "寻衅滋事公诉的最终结果尚未交代"
+      ],
+      "relationships": [
+        "与江晨敌对，但舆论战已彻底落败"
+      ],
+      "state": "造谣江晨失败，被全网反噬并收到公诉通知"
+    },
+    "周薄森": {
+      "abilities_resources": [
+        "文工团新媒体管理权限",
+        "向张耀祖和齐首长汇报的组织渠道",
+        "开放日筹备组审核清单的对接口"
+      ],
+      "goal": "护住江晨的创作空间，同时把开放日宣传按审核清单和时限走稳",
+      "identity": "火箭军文工团副团长；分管新媒体",
+      "knowledge": [
+        "开放日素材只能用筹备组审核通过的画面",
+        "江晨要在十四天内出歌、出片、出现场节目"
+      ],
+      "location": "火箭军文工团团部",
+      "open_threads": [
+        "江晨次日要出营取材，需批假",
+        "第一卷军宣整顿的卷界尚未确认"
+      ],
+      "relationships": [
+        "把江晨视为值得保护和培养的核心创作者",
+        "与张耀祖在江晨问题上保持同进退"
+      ],
+      "state": "开放日任务落到本团，既兴奋又担心十四天与审核边界出事"
+    },
+    "张耀祖": {
+      "abilities_resources": [
+        "文工团一把手决策权",
+        "向齐首长汇报和协调正式军宣资源的权限",
+        "上级点名交办的开放日宣传任务"
+      ],
+      "goal": "借开放日把文工团宣传成绩推到新高度，承接上级战略意图",
+      "identity": "火箭军文工团团长",
+      "knowledge": [
+        "上级把开放日宣传片和一个现场节目交给文工团并点名江晨",
+        "江晨主张开放日主题是离别而非秀装备"
+      ],
+      "location": "火箭军文工团团部",
+      "open_threads": [
+        "更高层对江晨的培养与使用安排尚未公开",
+        "开放日作品能否过审核清单并按期落地"
+      ],
+      "relationships": [
+        "赏识江晨并当面授权，暗中推动其与钟嘉嘉合作",
+        "与周薄森形成保护江晨的管理同盟",
+        "承接齐首长的宣传要求"
+      ],
+      "state": "首次当面把开放日宣传片与现场节目交给江晨，先疑后拍板「离别」主题"
+    },
+    "江晨": {
+      "abilities_resources": [
+        "前世MCN爆款运营经验",
+        "天王级唱功与嗓音",
+        "大师级导演能力",
+        "专业级钢琴演奏（已在排练厅首次亮相）",
+        "《离别开出花》伴奏（词未写）",
+        "约四十万元系统现金奖励"
+      ],
+      "goal": "十四天内做出开放日「离别」主题作品，先上门听完谭守义的故事再写词",
+      "identity": "火箭军文工团宣传兵；军宣顶流创作者",
+      "knowledge": [
+        "开放日在十四天后，文工团承担宣传片与一个现场节目",
+        "开放日素材须走筹备组审核清单",
+        "谭守义住邻市老干休所家属院，约两百公里"
+      ],
+      "location": "火箭军文工团办公室",
+      "open_threads": [
+        "任务三倒计时十三天余",
+        "谭守义的故事尚未听到",
+        "钟嘉嘉所谓只猜对一半仍未解释",
+        "与钟嘉嘉的感情尚未说破",
+        "吴伟公诉结果未落地"
+      ],
+      "relationships": [
+        "与钟嘉嘉暧昧升温，多了一个关于新歌的约定",
+        "张耀祖首次当面交底并授权，周薄森护短",
+        "与谭守义约定次日上门"
+      ],
+      "state": "《如愿》破亿余热未散即接下任务三与上级点名，压力与创作欲同时上来"
+    },
+    "谭守义": {
+      "abilities_resources": [
+        "清晰的戈壁年代记忆",
+        "能用手机私信与看视频"
+      ],
+      "goal": "把压了五十年的故事完整讲给江晨",
+      "identity": "退伍老兵；原第二炮兵戈壁导弹试验基地老兵，七十八岁",
+      "knowledge": [
+        "江晨是《如愿》的作者，肯听老兵讲故事"
+      ],
+      "location": "邻市老干休所家属院",
+      "open_threads": [
+        "故事内容尚未讲出（F057）"
+      ],
+      "relationships": [
+        "与江晨从私信邀约变为明确赴约"
+      ],
+      "state": "收到江晨「明天来」的回复，回信给地址并嘱带录音设备"
+    },
+    "钟嘉嘉": {
+      "abilities_resources": [
+        "军报版面与采访资源",
+        "军报拿到的开放日排期",
+        "老兵慰问与采访素材",
+        "爷爷提供的军方人脉"
+      ],
+      "goal": "跟进开放日报道，继续帮江晨把老兵故事做成有分量的军宣内容",
+      "identity": "军报记者；具有尚未完全公开的军方家庭背景",
+      "knowledge": [
+        "江晨两轮作品均已获军内外认可",
+        "江晨会弹钢琴且新歌叫《离别开出花》",
+        "军方培养江晨另有未公开安排"
+      ],
+      "location": "火箭军文工团",
+      "open_threads": [
+        "只猜对一半的真实含义尚未解释",
+        "与江晨的感情尚未说破",
+        "爷爷承诺的更大推力仍未完全兑现"
+      ],
+      "relationships": [
+        "与江晨由长期合作伙伴向暧昧推进，多了一个关于新歌的约定",
+        "爷爷认可并暗中推动江晨的宣传事业"
+      ],
+      "state": "报出开放日排期并称到时会来；听完试弹把「等我写完你就知道了」记在本子上"
+    }
+  },
+  "context": {
+    "active_character_names": [
+      "江晨",
+      "钟嘉嘉",
+      "周薄森",
+      "张耀祖",
+      "谭守义"
+    ],
+    "continuity_risks": [
+      "第一卷卷界仍是候选方案，未确认前不要擅自开新卷。",
+      "吴伟公诉、钟嘉嘉背景和军方培养安排仍未完整揭示。",
+      "谭守义故事的作者真相为候选（E015），作者可在第22章细纲前改；揭示前不当读者已知。",
+      "第23-24章的具名质疑方尚未裁定（卷纲 L1-03 供给自查 C 级）。"
+    ],
+    "long_term_constraints": [
+      "军宣爽点必须通过作品效果、传播数据和围观反应链兑现，不能只靠系统播报。",
+      "正式军宣内容仍受组织审核与领导决策约束，江晨不能无说明绕过流程。",
+      "地球作品落地要结合军旅场景和当代传播语境，不能只报歌名。",
+      "钟嘉嘉未公开的军方培养安排属于作者真相，正文揭示前不能当成读者已知。"
+    ],
+    "next_chapter_commitments": [
+      "江晨向周薄森请假出营，赴邻市听谭守义讲完整故事并录音，揭示F057。",
+      "第22章倒计时按剩十三天推进；审核清单细节留到第23章。"
+    ],
+    "position": {
+      "scene": "火箭军文工团办公室，江晨收到谭守义地址回信后",
+      "story_time": "《如愿》点击破亿后的第二天夜里",
+      "volume": "第一卷·军宣整顿（候选）",
+      "volume_start_chapter": 1
+    },
+    "recent_chapters": [
+      {
+        "chapter": 19,
+        "summary": "军营、校园和老兵家庭同时观看《如愿》，作品影响从热搜落到真实人群。"
+      },
+      {
+        "chapter": 20,
+        "summary": "《如愿》点击破亿，江晨获得《离别开出花》伴奏和钢琴能力，钟嘉嘉送来老兵书法礼。"
+      },
+      {
+        "chapter": 21,
+        "summary": "系统发布任务三：开放日前完成离别主题作品，开放日当天热度1000万+，限14天。张耀祖把开放日宣传片与现场节目交给江晨，离别主题获拍板，素材须走审核清单。江晨排练厅首次弹琴引围观；谭守义回信给邻市地址，称故事讲了五十年没人听全过。"
+      }
+    ]
+  },
+  "foreshadow": {
+    "F003": {
+      "id": "F003",
+      "importance": "中",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "江晨前世在公司上市前因胃癌早逝，这份遗憾仍驱动他抓住重来机会",
+      "updated_chapter": 20
+    },
+    "F014": {
+      "id": "F014",
+      "importance": "中",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 6,
+      "status": "已埋",
+      "summary": "军队正式表彰仍在路上，江晨尚未拿到完整嘉奖",
+      "updated_chapter": 20
+    },
+    "F016": {
+      "id": "F016",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 7,
+      "status": "已埋",
+      "summary": "钟嘉嘉并非普通军报实习生，她的军方家庭背景仍未完全公开",
+      "updated_chapter": 20
+    },
+    "F019": {
+      "id": "F019",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 8,
+      "status": "已埋",
+      "summary": "钟嘉嘉的爷爷承诺提供更大推力，军方资源仍有后续空间",
+      "updated_chapter": 20
+    },
+    "F021": {
+      "id": "F021",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 8,
+      "status": "已埋",
+      "summary": "江晨与钟嘉嘉的感情线已经升温，但双方尚未说破",
+      "updated_chapter": 20
+    },
+    "F023": {
+      "id": "F023",
+      "importance": "中",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 9,
+      "status": "已埋",
+      "summary": "首长授意亮剑亮肌肉，宏观战略宣传线仍会影响江晨的任务",
+      "updated_chapter": 20
+    },
+    "F024": {
+      "id": "F024",
+      "importance": "高",
+      "planned_resolution_chapter": 25,
+      "planted_chapter": 9,
+      "status": "已埋",
+      "summary": "开放日定在十四天后，火箭军某部首次开放；文工团承担宣传片与一个现场节目",
+      "updated_chapter": 21
+    },
+    "F027": {
+      "id": "F027",
+      "importance": "中",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 10,
+      "status": "已埋",
+      "summary": "专业团队仍拍不出江晨原版的灵魂，继续验证其创作能力不可复制",
+      "updated_chapter": 20
+    },
+    "F028": {
+      "id": "F028",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 10,
+      "status": "已埋",
+      "summary": "钟嘉嘉说江晨只猜对了一半，军方培养他的深层安排尚未揭示",
+      "updated_chapter": 20
+    },
+    "F049": {
+      "id": "F049",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 18,
+      "status": "已埋",
+      "summary": "吴伟收到寻衅滋事公诉通知，最终法律结果尚未落地",
+      "updated_chapter": 20
+    },
+    "F050": {
+      "id": "F050",
+      "importance": "中",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 18,
+      "status": "已埋",
+      "summary": "网友开始自发探访退伍老兵，社会影响仍会向线下扩散",
+      "updated_chapter": 20
+    },
+    "F054": {
+      "id": "F054",
+      "importance": "高",
+      "planned_resolution_chapter": 22,
+      "planted_chapter": 20,
+      "status": "已埋",
+      "summary": "谭守义已给邻市地址，江晨定次日上门听故事",
+      "updated_chapter": 21
+    },
+    "F055": {
+      "id": "F055",
+      "importance": "高",
+      "planned_resolution_chapter": 25,
+      "planted_chapter": 20,
+      "status": "已埋",
+      "summary": "《离别开出花》伴奏已定为任务三作品，只弹过旋律，词未写",
+      "updated_chapter": 21
+    },
+    "F056": {
+      "id": "F056",
+      "importance": "高",
+      "planned_resolution_chapter": 25,
+      "planted_chapter": 20,
+      "status": "已埋",
+      "summary": "钢琴技能已在排练厅首次亮相，尚未进入公开作品",
+      "updated_chapter": 21
+    },
+    "F057": {
+      "id": "F057",
+      "importance": "高",
+      "planned_resolution_chapter": 22,
+      "planted_chapter": 21,
+      "status": "已埋",
+      "summary": "谭守义有个讲了五十年没人听全过的故事，内容未揭示",
+      "updated_chapter": 21
+    },
+    "F058": {
+      "id": "F058",
+      "importance": "高",
+      "planned_resolution_chapter": 27,
+      "planted_chapter": 21,
+      "status": "已埋",
+      "summary": "任务三：离别主题作品、开放日当天热度1000万+、限时14天",
+      "updated_chapter": 21
+    }
+  },
+  "imported_through_chapter": 20,
+  "last_committed_chapter": 21,
+  "schema_version": 4,
+  "state_revision": 1,
+  "timeline": {
+    "E001": {
+      "characters": [
+        "江晨",
+        "周薄森"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E001",
+      "objective_fact": "江晨到火箭军文工团报到，并接到五天内把军宣账号做到百万粉的系统任务",
+      "reader_knowledge": "读者知道江晨重生后接手垫底军宣账号，并接到五天百万粉任务",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "故事开始当日",
+      "updated_chapter": 20
+    },
+    "E002": {
+      "characters": [
+        "江晨"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E002",
+      "objective_fact": "江晨完成《诸君，且听龙吟》剪辑并用新注册账号发布手机原版",
+      "reader_knowledge": "读者看到江晨用训练场素材和《中国军魂》做出第一条军宣视频并发布",
+      "reveal_chapter": 2,
+      "reveal_status": "已揭示",
+      "story_time": "报到后的第一个凌晨",
+      "updated_chapter": 20
+    },
+    "E003": {
+      "characters": [
+        "江晨",
+        "钟嘉嘉"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E003",
+      "objective_fact": "手机原版迅速爆火，军报决定采访江晨",
+      "reader_knowledge": "读者知道视频一夜爆红，江晨获得军报采访机会",
+      "reveal_chapter": 6,
+      "reveal_status": "已揭示",
+      "story_time": "视频发布后的次日",
+      "updated_chapter": 20
+    },
+    "E004": {
+      "characters": [
+        "钟嘉嘉"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E004",
+      "objective_fact": "钟嘉嘉的爷爷是退休高级军官，并决定帮助扩大江晨视频的影响",
+      "reader_knowledge": "读者已看到钟嘉嘉向爷爷展示视频，爷爷认可江晨并答应帮忙宣传",
+      "reveal_chapter": 8,
+      "reveal_status": "已揭示",
+      "story_time": "军报采访后的当夜",
+      "updated_chapter": 20
+    },
+    "E005": {
+      "characters": [
+        "江晨",
+        "周薄森",
+        "张耀祖"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E005",
+      "objective_fact": "文工团高层否决专业重拍版，决定继续采用江晨手机拍摄的原版",
+      "reader_knowledge": "读者已看到周薄森指出专业版缺了灵魂，张耀祖当场拍板用回原版",
+      "reveal_chapter": 10,
+      "reveal_status": "已揭示",
+      "story_time": "实弹训练两天后",
+      "updated_chapter": 20
+    },
+    "E006": {
+      "characters": [
+        "江晨"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E006",
+      "objective_fact": "江晨完成百万粉任务，获得《如愿》伴奏、天王级嗓音和国运奖励",
+      "reader_knowledge": "读者知道百万粉任务结算，江晨拿到《如愿》伴奏和新能力",
+      "reveal_chapter": 11,
+      "reveal_status": "已揭示",
+      "story_time": "手机原版发布周期第五天",
+      "updated_chapter": 20
+    },
+    "E007": {
+      "characters": [
+        "江晨",
+        "钟嘉嘉"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E007",
+      "objective_fact": "江晨与钟嘉嘉决定制作致敬老兵的《如愿》主题视频",
+      "reader_knowledge": "读者看到钟嘉嘉带来老兵素材，江晨确定《如愿》的创作方向",
+      "reveal_chapter": 12,
+      "reveal_status": "已揭示",
+      "story_time": "百万粉任务结算后",
+      "updated_chapter": 20
+    },
+    "E008": {
+      "characters": [
+        "江晨",
+        "吴伟"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E008",
+      "objective_fact": "吴伟为流量和广告利益造谣江晨消费老兵，舆论短暂恶化",
+      "reader_knowledge": "读者知道吴伟主动造谣，江晨当时仍专注做歌且不知情",
+      "reveal_chapter": 14,
+      "reveal_status": "已揭示",
+      "story_time": "《如愿》预告发布后",
+      "updated_chapter": 20
+    },
+    "E009": {
+      "characters": [
+        "江晨",
+        "周薄森",
+        "张耀祖"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E009",
+      "objective_fact": "齐首长批准继续发布《如愿》，周薄森和张耀祖共同为江晨背书",
+      "reader_knowledge": "读者看到军方高层没有撤下项目，反而把危机当成关注老兵的机会",
+      "reveal_chapter": 15,
+      "reveal_status": "已揭示",
+      "story_time": "造谣风波当日凌晨",
+      "updated_chapter": 20
+    },
+    "E010": {
+      "characters": [
+        "江晨",
+        "钟嘉嘉"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E010",
+      "objective_fact": "《如愿》完成舆论反转并登上热搜，官方媒体陆续转发",
+      "reader_knowledge": "读者看到弹幕从质疑转为致敬，视频破百万并获官方媒体背书",
+      "reveal_chapter": 17,
+      "reveal_status": "已揭示",
+      "story_time": "《如愿》发布当日",
+      "updated_chapter": 20
+    },
+    "E011": {
+      "characters": [
+        "吴伟"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E011",
+      "objective_fact": "平台永久封禁吴伟账号，司法机关以寻衅滋事启动公诉",
+      "reader_knowledge": "读者知道吴伟封号并收到公诉通知，但最终判决尚未发生",
+      "reveal_chapter": 18,
+      "reveal_status": "已揭示",
+      "story_time": "《如愿》爆红当日",
+      "updated_chapter": 20
+    },
+    "E012": {
+      "characters": [
+        "江晨",
+        "钟嘉嘉"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E012",
+      "objective_fact": "江晨获得《离别开出花》伴奏和专业级钢琴能力，钟嘉嘉送来老兵书法礼",
+      "reader_knowledge": "读者看到《如愿》点击破亿、系统结算新奖励，钟嘉嘉登门送礼",
+      "reveal_chapter": 20,
+      "reveal_status": "已揭示",
+      "story_time": "《如愿》点击破亿后的第二天",
+      "updated_chapter": 20
+    },
+    "E013": {
+      "characters": [
+        "江晨",
+        "钟嘉嘉"
+      ],
+      "first_recorded_chapter": 20,
+      "id": "E013",
+      "objective_fact": "军方培养江晨另有尚未公开的后续安排",
+      "reader_knowledge": "读者只知道钟嘉嘉说江晨只猜对了一半，不知道具体安排",
+      "reveal_chapter": null,
+      "reveal_status": "未揭示",
+      "story_time": "第十章看片会后",
+      "updated_chapter": 20
+    },
+    "E014": {
+      "characters": [
+        "江晨",
+        "钟嘉嘉",
+        "周薄森",
+        "张耀祖",
+        "谭守义"
+      ],
+      "first_recorded_chapter": 21,
+      "id": "E014",
+      "objective_fact": "系统发布任务三并开始十四天倒计时；张耀祖把开放日宣传片与现场节目交给江晨，主题定为离别；谭守义回信给地址（涉及：江晨、张耀祖、谭守义）",
+      "reader_knowledge": "读者看到任务三发布、离别主题获拍板、江晨首次弹琴、谭守义回信说故事讲了五十年没人听全过",
+      "reveal_chapter": 21,
+      "reveal_status": "已揭示",
+      "story_time": "《如愿》点击破亿后的第二天",
+      "updated_chapter": 21
+    },
+    "E015": {
+      "characters": [
+        "谭守义"
+      ],
+      "first_recorded_chapter": 21,
+      "id": "E015",
+      "objective_fact": "候选真相：谭守义的同班战友韩树生1974年在戈壁试验事故中牺牲，托他代寄的家书因保密被扣、五十年未寄出（涉及：谭守义）",
+      "reader_knowledge": "读者只知道谭守义有个讲了五十年没人听全过的故事",
+      "reveal_chapter": null,
+      "reveal_status": "未揭示",
+      "story_time": "1974年秋（谭守义戈壁服役期）",
+      "updated_chapter": 21
+    }
+  },
+  "wordcount_records": {
+    "21": {
+      "actual": 2068,
+      "body_sha256": "10b7fed372a33d3e7d7e620864d07f77eb33eb7abbc48cba5684efed034197b1",
+      "metric": "visible_chars_v1",
+      "resolution": "within_user_band",
+      "status": "internal_pass",
+      "target": 2300
+    }
+  }
+}

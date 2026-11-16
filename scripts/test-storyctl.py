@@ -1,0 +1,680 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import importlib.util
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+import unittest.mock
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+STORYCTL_PATH = ROOT / "skills/story-long-write/scripts/storyctl.py"
+SPEC = importlib.util.spec_from_file_location("storyctl", STORYCTL_PATH)
+assert SPEC and SPEC.loader
+storyctl = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(storyctl)
+
+
+def run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+    completed = subprocess.run(
+        [sys.executable, str(STORYCTL_PATH), *arguments],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError(
+            f"CLI did not return JSON: exit={completed.returncode} stdout={completed.stdout!r} stderr={completed.stderr!r}"
+        ) from error
+    return completed, payload
+
+
+class VisibleCharsTests(unittest.TestCase):
+    def test_frozen_unicode_counting_contract(self) -> None:
+        self.assertEqual(storyctl.count_visible_chars("甲\n乙"), 2)
+        self.assertEqual(storyctl.count_visible_chars("甲\r\n乙"), 2)
+        self.assertEqual(storyctl.count_visible_chars("甲\r乙"), 2)
+        self.assertEqual(storyctl.count_visible_chars("中文"), 2)
+        self.assertEqual(storyctl.count_visible_chars("😀"), 1)
+        self.assertEqual(storyctl.count_visible_chars("e\u0301"), 2)
+        self.assertEqual(storyctl.count_visible_chars("\ufeff正文"), 2)
+        self.assertEqual(storyctl.count_visible_chars("正文\ufeff"), 3)
+        self.assertEqual(storyctl.count_visible_chars("中文，。！"), 5)
+
+        whitespace = "".join(
+            chr(codepoint)
+            for codepoint in [
+                *range(0x0009, 0x000E),
+                0x0020,
+                0x0085,
+                0x00A0,
+                0x1680,
+                *range(0x2000, 0x200B),
+                0x2028,
+                0x2029,
+                0x202F,
+                0x205F,
+                0x3000,
+            ]
+        )
+        self.assertEqual(storyctl.count_visible_chars(f"甲{whitespace}乙"), 2)
+
+    def test_frontmatter_and_first_heading_are_not_body(self) -> None:
+        body = "\ufeff---\r\ntitle: 第一章\r\ntags:\r\n  - test\r\n---\r\n# 第一章 标题\r\n正文😀\r\n"
+        self.assertEqual(storyctl.count_visible_chars(body), 3)
+        self.assertEqual(storyctl.count_visible_chars("---\n场景转换\n---\n正文"), 12)
+        self.assertEqual(storyctl.count_visible_chars("# 第一章\n正文\n## 中段标题"), 8)
+
+    def test_bands_and_status_boundaries(self) -> None:
+        self.assertEqual(
+            storyctl.compute_wordcount_bands(1200),
+            {"internal": {"min": 1056, "max": 1344}, "user": {"min": 1020, "max": 1380}},
+        )
+        self.assertEqual(
+            storyctl.compute_wordcount_bands(1001),
+            {"internal": {"min": 881, "max": 1121}, "user": {"min": 851, "max": 1151}},
+        )
+
+        def status(actual: int) -> str:
+            return storyctl.evaluate_wordcount("字" * actual, 1200)["status"]
+
+        self.assertEqual(status(1056), "internal_pass")
+        self.assertEqual(status(1344), "internal_pass")
+        self.assertEqual(status(1055), "borderline")
+        self.assertEqual(status(1020), "borderline")
+        self.assertEqual(status(1345), "borderline")
+        self.assertEqual(status(1380), "borderline")
+        self.assertEqual(status(1019), "under")
+        self.assertEqual(status(1381), "over")
+        self.assertEqual(storyctl.evaluate_wordcount("", 1200)["invalid_reason"], "EMPTY_BODY")
+        self.assertEqual(storyctl.evaluate_wordcount("正文", "12.5")["invalid_reason"], "INVALID_TARGET")
+        self.assertEqual(
+            storyctl.evaluate_wordcount("正文", "9007199254740992")["invalid_reason"],
+            "INVALID_TARGET",
+        )
+
+
+class OutlineTargetTests(unittest.TestCase):
+    def test_outline_target_accepts_utf8_bom_and_crlf(self) -> None:
+        plain = "- 字数目标：1000 字\n- 字数口径：visible_chars_v1\n"
+        self.assertEqual(storyctl.target_from_outline(plain), 1000)
+        self.assertEqual(storyctl.target_from_outline("\ufeff" + plain), 1000)
+        self.assertEqual(
+            storyctl.target_from_outline("\ufeff" + plain.replace("\n", "\r\n")),
+            1000,
+        )
+
+    def test_outline_target_rejections_remain_unchanged(self) -> None:
+        with self.assertRaisesRegex(storyctl.WordcountError, "字数口径"):
+            storyctl.target_from_outline(
+                "- 字数目标：1000 字\n- 字数口径：VISIBLE_CHARS_V1\n"
+            )
+        with self.assertRaisesRegex(storyctl.WordcountError, "字数目标"):
+            storyctl.target_from_outline(
+                "- 字数目标：1000 字\n"
+                "- 字数目标：1200 字\n"
+                "- 字数口径：visible_chars_v1\n"
+            )
+
+
+OUTLINE_CONTRACT = ROOT / "skills/story-long-write/scripts/check-outline-contract.js"
+CALIBER_LINE = "- 字数口径：visible_chars_v1\n"
+# 同一组细纲写法同时喂给 Python（storyctl / wordcount_core）与 JS（check-outline-contract），
+# 两边对「字数目标」「字数范围」的接受与取值必须逐条一致：细纲验收通过的，章节检查不能再拒。
+GRAMMAR_CASES: list[tuple[str, int | None, dict[str, int] | None]] = [
+    ("- 字数目标：2300\n", 2300, None),
+    ("- 字数目标：2300 字\n", 2300, None),
+    ("- 字数目标：2300字\n", 2300, None),
+    ("- 字数目标：约 2300\n", 2300, None),
+    ("- 字数目标：约2300字\n", 2300, None),
+    ("- 字数目标：大约 2300 字\n", 2300, None),
+    ("- 字数目标：2,300\n", 2300, None),
+    ("- 字数目标：2，300 字\n", 2300, None),
+    ("- 字数目标：2300 字（本章偏短）\n", 2300, None),
+    ("- 字数目标：2300字左右\n", 2300, None),
+    ("- **字数目标**：2300 字\n", 2300, None),
+    ("- 字数目标: 2300 字\n", 2300, None),
+    ("字数目标：2300\n", 2300, None),
+    ("- 字数目标：2300 字\n- 字数目标：2300\n", 2300, None),
+    ("- 字数目标：很多字\n", None, None),
+    ("- 字数目标：[待补充]\n", None, None),
+    ("- 字数目标：2000-2600\n", None, None),
+    ("- 字数目标：2300 字，偏短\n", None, None),
+    ("- 字数目标：0\n", None, None),
+    ("- 字数目标：23,00\n", None, None),
+    ("- 字数目标：２３００\n", None, None),
+    ("- 字数目标：2300 字\n- 字数目标：2400 字\n", None, None),
+    ("- 核心事件：无字数\n", None, None),
+    ("- 字数目标：2300 字\n- 字数范围：2000-2600\n", 2300, {"min": 2000, "max": 2600}),
+    ("- 字数目标：2300 字\n- 字数范围：2,000～2,600 字\n", 2300, {"min": 2000, "max": 2600}),
+    ("- 字数目标：2300 字\n- 字数范围：2000 至 2600 字（作者指定）\n", 2300, {"min": 2000, "max": 2600}),
+    ("- 字数目标：2300 字\n- 字数范围：2000字-2600字\n", 2300, {"min": 2000, "max": 2600}),
+    ("- 字数目标：2300 字\n- 字数范围：2600-2000\n", 2300, "invalid"),
+    ("- 字数目标：2300 字\n- 字数范围：约 2000\n", 2300, "invalid"),
+    ("- 字数目标：2300 字\n- 字数范围：2000-2600\n- 字数范围：2100-2500\n", 2300, "invalid"),
+    # 旧细纲的说明行：值里没有数字就当说明文字，不参与取值；多个数字值冲突仍报错。
+    ("- 字数目标：2300\n- 字数目标：按卷规划\n", 2300, None),
+    ("- 字数目标：按卷规划\n- 字数目标：2300 字\n", 2300, None),
+    ("- 字数目标：2300\n- 字数目标：按卷规划\n- 字数目标：2400\n", None, None),
+    ("- 字数目标：2300 字\n- 字数范围：按作者要求\n", 2300, None),
+    ("- 字数目标：2300 字\n- 字数范围：2000-2600\n- 字数范围：看情况\n", 2300, {"min": 2000, "max": 2600}),
+]
+# 「字数口径」行可不写；写了两边用同一套行语法（列表/加粗/引用前缀、行尾括注可有），值只能是 visible_chars_v1。
+METRIC_CASES: list[tuple[str, bool]] = [
+    ("- 字数口径：visible_chars_v1\n", True),
+    ("字数口径：visible_chars_v1\n", True),
+    ("> 字数口径: visible_chars_v1\n", True),
+    ("- **字数口径**：visible_chars_v1\n", True),
+    ("- **字数口径：** visible_chars_v1\n", True),
+    ("- 字数口径：visible_chars_v1（按可见字符）\n", True),
+    ("- 字数口径：visible_chars_v1\n- 字数口径：visible_chars_v1（重复写）\n", True),
+    ("- 字数口径：visible_chars_v1 按可见字符\n", False),
+    ("- 字数口径：VISIBLE_CHARS_V1\n", False),
+    ("- 字数口径：visible_chars_v1\n- 字数口径：visible_chars_v2\n", False),
+    # 0.10 起口径可不写：没有这一行（或只在别的字段里提到）按默认口径。
+    ("- 说明：字数口径：visible_chars_v1\n", True),
+    ("- 核心事件：没写口径\n", True),
+    ("", True),
+]
+
+
+def python_grammar(text: str) -> dict[str, object]:
+    try:
+        target: object = storyctl.target_from_outline(text)
+    except storyctl.WordcountError:
+        target = None
+    try:
+        author_range: object = storyctl.range_from_outline(text)
+    except storyctl.WordcountError:
+        author_range = "invalid"
+    return {"target": target, "range": author_range}
+
+
+class WordcountGrammarParityTests(unittest.TestCase):
+    def test_outline_contract_and_storyctl_accept_the_same_wordcount_lines(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="wordcount-grammar-") as directory:
+            files = []
+            for index, (lines, _, _) in enumerate(GRAMMAR_CASES):
+                path = Path(directory) / f"细纲_case_{index:02d}.md"
+                path.write_text(lines + CALIBER_LINE, encoding="utf-8")
+                files.append(path)
+            completed = subprocess.run(
+                ["node", str(OUTLINE_CONTRACT), "--json", *map(str, files)],
+                cwd=ROOT, text=True, encoding="utf-8", capture_output=True, check=False,
+            )
+            reports = json.loads(completed.stdout)
+            for (lines, target, author_range), path, report in zip(GRAMMAR_CASES, files, reports):
+                text = path.read_text(encoding="utf-8")
+                python_side = python_grammar(text)
+                js_side = report.get("wordcount")
+                self.assertIsNotNone(js_side, f"outline contract report has no wordcount block: {lines!r}")
+                js_range = js_side["range"] if js_side["range_status"] != "invalid" else "invalid"
+                self.assertEqual(python_side, {"target": target, "range": author_range}, lines)
+                self.assertEqual({"target": js_side["target"], "range": js_range}, python_side, lines)
+                check = next(item for item in report["checks"] if item["id"] == "outline.wordcount-target")
+                self.assertEqual(check["ok"], target is not None and author_range != "invalid", lines)
+
+    def test_outline_contract_and_storyctl_accept_the_same_metric_lines(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="wordcount-metric-") as directory:
+            files = []
+            for index, (lines, _) in enumerate(METRIC_CASES):
+                path = Path(directory) / f"细纲_metric_{index:02d}.md"
+                path.write_text("- 字数目标：2300 字\n" + lines, encoding="utf-8")
+                files.append(path)
+            completed = subprocess.run(
+                ["node", str(OUTLINE_CONTRACT), "--json", *map(str, files)],
+                cwd=ROOT, text=True, encoding="utf-8", capture_output=True, check=False,
+            )
+            reports = json.loads(completed.stdout)
+            for (lines, accepted), path, report in zip(METRIC_CASES, files, reports):
+                python_side = python_grammar(path.read_text(encoding="utf-8"))["target"] == 2300
+                check = next(item for item in report["checks"] if item["id"] == "outline.wordcount-target")
+                self.assertEqual(python_side, accepted, f"storyctl: {lines!r}")
+                self.assertEqual(check["ok"], accepted, f"outline contract: {lines!r}")
+
+
+class AuthorRangeTests(unittest.TestCase):
+    def test_author_range_replaces_the_default_band_everywhere(self) -> None:
+        author = {"min": 2000, "max": 2600}
+        # 2000 字：默认 ±12% 内部带（2024 起）判 borderline；作者给了 2000-2600 就是带内。
+        result = storyctl.evaluate_wordcount("字" * 2000, 2300, author_range=author)
+        self.assertEqual(result["status"], "internal_pass")
+        self.assertEqual(result["band_source"], "author")
+        self.assertEqual(result["user_band"], {"min": 2000, "max": 2600, "status": "pass"})
+        self.assertEqual(storyctl.evaluate_wordcount("字" * 1999, 2300, author_range=author)["status"], "under")
+        self.assertEqual(storyctl.evaluate_wordcount("字" * 2601, 2300, author_range=author)["status"], "over")
+        self.assertEqual(storyctl.evaluate_wordcount("字" * 2000, 2300)["band_source"], "default")
+        checkpoint = storyctl.checkpoint_wordcount("字" * 900, 2300, author_range=author)
+        self.assertEqual(checkpoint["remaining_user_range"], {"min": 1100, "max": 1700})
+
+    def test_checkpoint_cli_takes_min_and_max_chars(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-range-") as directory:
+            segment = Path(directory) / "前组.md"
+            segment.write_text("# 前组\n" + "字" * 900, encoding="utf-8")
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--target", "2300",
+                "--min-chars", "2000", "--max-chars", "2600",
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertEqual(result["user_band"], {"min": 2000, "max": 2600})
+            self.assertEqual(result["remaining_user_range"], {"min": 1100, "max": 1700})
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--target", "2300", "--min-chars", "2000",
+            )
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(result["invalid_reason"], "INVALID_ARGUMENT")
+
+
+class CheckpointTests(unittest.TestCase):
+    def test_checkpoint_reports_only_current_count_and_remaining_user_range(self) -> None:
+        result = storyctl.checkpoint_wordcount("字" * 558, 2200, chapter=28)
+        self.assertEqual(result["schema"], "story-wordcount-checkpoint/v1")
+        self.assertEqual(result["actual"], 558)
+        self.assertEqual(result["user_band"], {"min": 1870, "max": 2530})
+        self.assertEqual(result["remaining_user_range"], {"min": 1312, "max": 1972})
+        self.assertNotIn("beats", result)
+        self.assertNotIn("resolution", result)
+
+
+class StoryctlCliTests(unittest.TestCase):
+    def test_chapter_check_cli_reads_bom_crlf_outline_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-bom-outline-") as directory:
+            project = Path(directory)
+            (project / "大纲").mkdir()
+            (project / "正文").mkdir()
+            outline = project / "大纲/细纲_第001章.md"
+            with outline.open("w", encoding="utf-8", newline="") as output:
+                output.write("\ufeff- 字数目标：1000 字\r\n- 字数口径：visible_chars_v1\r\n")
+            (project / "正文/第001章_测试.md").write_text(
+                "# 第一章\n" + "字" * 999 + "。", encoding="utf-8"
+            )
+            tracking = storyctl._tracking_module()
+            tracking.initialize(
+                project,
+                {
+                    "schema_version": 1,
+                    "book_title": "BOM 大纲测试",
+                    "last_chapter": 0,
+                    "context": {
+                        "position": {
+                            "volume": "第一卷",
+                            "volume_start_chapter": 1,
+                            "story_time": "当日",
+                            "scene": "测试",
+                        },
+                        "long_term_constraints": ["只写批准内容。"],
+                        "active_character_names": [],
+                        "continuity_risks": [],
+                        "recent_chapters": [],
+                        "next_chapter_commitments": [],
+                    },
+                    "character_snapshots": {},
+                    "foreshadow": [],
+                    "timeline_events": [],
+                },
+            )
+            # 改稿流程留在 正文/ 的原稿备份不算本章正文（否则「本章正文不唯一」直接失败）。
+            (project / "正文/第001章_测试_原稿_20260925.md").write_text(
+                "# 第一章\n" + "旧" * 500 + "。", encoding="utf-8"
+            )
+            completed, result = run_cli(
+                "chapter", "check", "--project", str(project), "--chapter", "1"
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(result["schema"], "story-chapter-check/v1")
+        self.assertEqual(result["length"]["target"], 1000)
+        self.assertEqual(result["length"]["status"], "internal_pass")
+
+    @unittest.skipUnless(shutil.which("node"), "node absent")
+    def test_deslop_skip_marker_exempts_ai_patterns(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-deslop-skip-") as directory:
+            root = Path(directory)
+            outline = root / "细纲_第001章.md"
+            outline.write_text("- 字数目标：1000 字\n", encoding="utf-8")
+            body = root / "第001章_测试.md"
+            prose = "他站在门口。声音不大，却让屋里的人都停了手。她声音不高，却把账念得清清楚楚。\n"
+            body.write_text("## 第1章 测试\n" + prose, encoding="utf-8")
+            plain = storyctl.check_blocking_quality(outline, body)
+            self.assertEqual(plain["status"], "fail", plain)
+            # 作者说本章不去味：标题行下的豁免标记让 AI 句式降为提示，章节可以提交。
+            body.write_text("## 第1章 测试\n<!-- 去味:跳过 -->\n" + prose, encoding="utf-8")
+            skipped = storyctl.check_blocking_quality(outline, body)
+            self.assertEqual(skipped["status"], "pass", skipped)
+            self.assertTrue(any(item.get("exempted") for item in skipped["advisories"]), skipped)
+            # 标记语法与 hooks（JS core / codex py / bash guard）同一套：注释内 ASCII 空格/Tab 可有可无，
+            # 冒号全角半角都认；裸写（不在注释里）或用全角空格隔开的都不算豁免。
+            for marker, exempt in (
+                ("<!--去味 ：\t跳过 -->", True),
+                ("去味:跳过", False),
+                ("<!-- 去味\u3000:跳过 -->", False),
+            ):
+                body.write_text("## 第1章 测试\n" + marker + "\n" + prose, encoding="utf-8")
+                self.assertEqual(storyctl.deslop_skipped(body), exempt, marker)
+            # 豁免只管 AI 句式：退化类（拒绝语/元信息泄漏）带着标记照样拦。
+            leak = "作为AI，我无法继续创作这部分内容。\n"
+            body.write_text("## 第1章 测试\n<!-- 去味:跳过 -->\n" + prose + leak, encoding="utf-8")
+            degenerate = storyctl.check_blocking_quality(outline, body)
+            self.assertEqual(degenerate["status"], "fail", degenerate)
+            self.assertEqual({row["source"] for row in degenerate["blocking_findings"]}, {"degeneration"}, degenerate)
+            # 标记只在首 6 行内生效（与 hooks 同窗口）：落在第 7 行的不豁免。
+            filler = "".join(f"第{index}句。\n" for index in range(1, 6))
+            body.write_text("## 第1章 测试\n" + filler + "<!-- 去味:跳过 -->\n" + prose, encoding="utf-8")
+            late = storyctl.check_blocking_quality(outline, body)
+            self.assertFalse(storyctl.deslop_skipped(body))
+            self.assertEqual(late["status"], "fail", late)
+            self.assertTrue(any(row["source"] == "ai-pattern" for row in late["blocking_findings"]), late)
+
+    def test_wordcount_measure_returns_actual_without_a_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-measure-") as directory:
+            body = Path(directory) / "chapter.md"
+            body.write_text("# 第一章\n正文 😀", encoding="utf-8")
+            completed, result = run_cli(
+                "wordcount", "measure", "--file", str(body), "--chapter", "1"
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(result["schema"], "story-wordcount-measurement/v1")
+        self.assertEqual(result["metric"], "visible_chars_v1")
+        self.assertEqual(result["actual"], 3)
+        self.assertEqual(result["status"], "measured")
+
+    def test_wordcount_check_returns_structured_result(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-check-") as directory:
+            body = Path(directory) / "chapter.md"
+            body.write_text("# 第一章\n" + "字" * 1020, encoding="utf-8")
+            completed, result = run_cli(
+                "wordcount",
+                "check",
+                "--file",
+                str(body),
+                "--target",
+                "1200",
+                "--chapter",
+                "1",
+                "--case-id",
+                "boundary",
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(result["schema"], "story-wordcount-result/v1")
+        self.assertEqual(result["metric"], "visible_chars_v1")
+        self.assertEqual(result["chapter"], "1")
+        self.assertEqual(result["case_id"], "boundary")
+        self.assertEqual(result["actual"], 1020)
+        self.assertEqual(result["status"], "borderline")
+        self.assertEqual(result["internal_band"], {"min": 1056, "max": 1344, "status": "fail"})
+        self.assertEqual(result["user_band"], {"min": 1020, "max": 1380, "status": "pass"})
+
+    def test_cli_errors_are_json_and_nonzero(self) -> None:
+        completed, result = run_cli("wordcount", "check", "--file", "missing.md", "--target", "1200")
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(result["invalid_reason"], "INVALID_FILE")
+
+        completed, result = run_cli("unknown-command")
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(result["invalid_reason"], "INVALID_ARGUMENT")
+
+    def test_demo_outlines_and_bodies_use_the_same_metric(self) -> None:
+        book = ROOT / "demo/长篇/让你管账号，你高燃混剪炸全网"
+        outlines = sorted((book / "大纲").glob("细纲_第*.md"))
+        self.assertGreaterEqual(len(outlines), 1)
+        # 导入的章节其「字数目标」是从已发布正文反推的，因此逐字相等；
+        # 导入之后由 skill 写出的章节只需落在内部带内（作者可接受偏短的成稿）。
+        state = json.loads(
+            (book / "追踪/_tracking-state.json").read_text(encoding="utf-8")
+        )
+        imported_through = state["imported_through_chapter"]
+        for outline in outlines:
+            target = storyctl.target_from_outline(outline.read_text(encoding="utf-8"))
+
+            chapter = outline.stem.removeprefix("细纲_第").removesuffix("章")
+            bodies = list((book / "正文").glob(f"第{chapter}章_*"))
+            self.assertEqual(len(bodies), 1, outline.name)
+            completed, result = run_cli(
+                "wordcount",
+                "check",
+                "--file",
+                str(bodies[0]),
+                "--target",
+                str(target),
+                "--chapter",
+                chapter,
+            )
+            self.assertEqual(completed.returncode, 0, f"{outline.name}: {completed.stderr}")
+            self.assertEqual(result["status"], "internal_pass", outline.name)
+            if int(chapter) <= imported_through:
+                self.assertEqual(result["target"], result["actual"], outline.name)
+
+
+
+def _init_tracking(project: Path) -> None:
+    storyctl._tracking_module().initialize(
+        project,
+        {
+            "schema_version": 1,
+            "book_title": "测试",
+            "last_chapter": 0,
+            "context": {
+                "position": {"volume": "第一卷", "volume_start_chapter": 1, "story_time": "当日", "scene": "测试"},
+                "long_term_constraints": ["只写批准内容。"],
+                "active_character_names": [],
+                "continuity_risks": [],
+                "recent_chapters": [],
+                "next_chapter_commitments": [],
+            },
+            "character_snapshots": {},
+            "foreshadow": [],
+            "timeline_events": [],
+        },
+    )
+
+
+class ToolFailureTests(unittest.TestCase):
+    """检测器崩溃或输出坏掉时不能把章节当成通过：一律按工具不可用（exit 3）处理。"""
+
+    def _quality_with(self, script: str, returncode: int, stdout: str) -> dict[str, object]:
+        real_run = subprocess.run
+
+        def fake_run(command, *args, **kwargs):
+            if len(command) > 1 and Path(command[1]).name == script:
+                return subprocess.CompletedProcess(command, returncode, stdout, "boom")
+            return real_run(command, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory(prefix="storyctl-tool-") as directory:
+            outline = Path(directory) / "细纲_第001章.md"
+            outline.write_text("- 字数目标：1000 字\n", encoding="utf-8")
+            body = Path(directory) / "第001章_测试.md"
+            body.write_text("## 第1章 测试\n他推门进去，屋里没人。\n", encoding="utf-8")
+            with unittest.mock.patch.object(storyctl.subprocess, "run", fake_run):
+                return storyctl.check_blocking_quality(outline, body)
+
+    @unittest.skipUnless(shutil.which("node"), "node absent")
+    def test_unparseable_detector_output_is_tool_unavailable(self) -> None:
+        for script in ("check-ai-patterns.js", "check-degeneration.js"):
+            for returncode, stdout in ((1, "Segmentation fault"), (0, ""), (1, '{"findings": "x"}')):
+                quality = self._quality_with(script, returncode, stdout)
+                self.assertEqual(quality["status"], "unavailable", (script, returncode, stdout, quality))
+                self.assertIn(script, [row["tool"] for row in quality["tool_errors"]])
+        self.assertEqual(storyctl._check_status({"status": "internal_pass"}, quality), "tool_unavailable")
+        self.assertEqual(storyctl.CHECK_EXIT_CODES["tool_unavailable"], 3)
+
+    @unittest.skipUnless(shutil.which("node"), "node absent")
+    def test_punctuation_crash_is_tool_unavailable_not_blocked(self) -> None:
+        crashed = self._quality_with("normalize-punctuation.js", 2, "")
+        self.assertEqual(crashed["status"], "unavailable", crashed)
+        self.assertEqual(crashed["blocking_findings"], [], crashed)
+        unnormalized = self._quality_with("normalize-punctuation.js", 1, "x.md:1:1: ascii-comma: 半角逗号")
+        self.assertEqual(unnormalized["status"], "fail", unnormalized)
+        self.assertEqual(unnormalized["blocking_findings"][0]["type"], "PUNCTUATION_NOT_NORMALIZED")
+
+
+class OutlineRangeOverrideTests(unittest.TestCase):
+    def _project(self, directory: str, range_line: str) -> Path:
+        project = Path(directory)
+        (project / "大纲").mkdir()
+        (project / "正文").mkdir()
+        (project / "大纲/细纲_第001章.md").write_text(
+            "- 字数目标：2300 字\n- 字数口径：visible_chars_v1\n" + range_line, encoding="utf-8"
+        )
+        (project / "正文/第001章_测试.md").write_text("# 第一章\n" + "字" * 2100 + "。", encoding="utf-8")
+        _init_tracking(project)
+        return project
+
+    def test_cli_range_overrides_a_malformed_outline_range(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-range-override-") as directory:
+            project = self._project(directory, "- 字数范围：2600-2000\n")
+            completed, result = run_cli("chapter", "check", "--project", str(project), "--chapter", "1")
+            self.assertEqual(completed.returncode, 2, completed.stdout)
+            self.assertEqual(result["error_code"], "CHECK_FAILED")
+            completed, result = run_cli(
+                "chapter", "check", "--project", str(project), "--chapter", "1",
+                "--min-chars", "2000", "--max-chars", "2600",
+            )
+            self.assertNotEqual(result.get("status"), "error", result)
+            self.assertEqual(result["length"]["band_source"], "author")
+            self.assertEqual(result["length"]["user_band"]["min"], 2000)
+            segment = project / "前组.md"
+            segment.write_text("# 前组\n" + "字" * 900, encoding="utf-8")
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--project", str(project), "--chapter", "1",
+                "--min-chars", "2000", "--max-chars", "2600",
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertEqual(result["remaining_user_range"], {"min": 1100, "max": 1700})
+
+    def test_checkpoint_reads_target_and_author_range_from_outline(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-checkpoint-outline-") as directory:
+            project = self._project(directory, "- 字数范围：2000-2600\n")
+            segment = project / "前组.md"
+            segment.write_text("# 前组\n" + "字" * 900, encoding="utf-8")
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--project", str(project), "--chapter", "1",
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertEqual(result["target"], 2300)
+            self.assertEqual(result["band_source"], "author")
+            self.assertEqual(result["remaining_user_range"], {"min": 1100, "max": 1700})
+            # 命令行上下限优先于细纲；细纲没写范围时回落默认带。
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--project", str(project), "--chapter", "1",
+                "--min-chars", "2100", "--max-chars", "2500",
+            )
+            self.assertEqual(result["remaining_user_range"], {"min": 1200, "max": 1600})
+            (project / "大纲/细纲_第001章.md").write_text(
+                "- 字数目标：2300 字\n- 字数口径：visible_chars_v1\n", encoding="utf-8"
+            )
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--project", str(project), "--chapter", "1",
+            )
+            self.assertEqual(result["band_source"], "default")
+            completed, result = run_cli("wordcount", "checkpoint", "--file", str(segment))
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(result["invalid_reason"], "INVALID_ARGUMENT")
+            completed, result = run_cli(
+                "wordcount", "checkpoint", "--file", str(segment), "--project", str(project), "--chapter", "9",
+            )
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(result["invalid_reason"], "INVALID_OUTLINE")
+
+class FragmentationTests(unittest.TestCase):
+    def test_short_paragraphs_count_dialogue_and_sentences_skip_quotes(self) -> None:
+        text = ("## 第1章 雨夜\n"
+                "“谁来过？”\n"
+                "他把伞靠在门边，雨水顺着伞骨往下滴，在地板上积了一小摊。他盯着那摊水看了很久。\n"
+                "没人回答。\n")
+        result = storyctl.fragmentation(text)
+        # # 开头的行不算段；对话段算段。
+        self.assertEqual(result["paragraphs"], 3)
+        self.assertEqual(result["short_paragraphs"], 2)
+        self.assertAlmostEqual(result["short_paragraph_ratio"], 0.667)
+        # 去掉“…”里的话，按 。！？!? 切句，每句去空白后数字数（标点也算）：26、10、4，中位数 10。
+        self.assertEqual(result["narrative_sentences"], 3)
+        self.assertEqual(result["narrative_sentence_median"], 10)
+        self.assertEqual(result["human_reference"]["short_paragraph_ratio"], 0.38)
+        self.assertEqual(result["human_reference"]["narrative_sentence_median"], 23)
+        self.assertEqual(result["human_reference"]["short_paragraph_range"], [0.16, 0.62])
+        self.assertEqual(result["human_reference"]["narrative_sentence_range"], [15, 35])
+        # 半角双引号与『…』台词同样剥离，无句末标点的换行按段断开不跨行粘连。
+        unpunctuated = storyctl.fragmentation('## 第1章\n"别动！"他推门进来\n屋里黑漆漆的\n『快走！』她转身跑了……没回头。\n')
+        self.assertEqual(unpunctuated["narrative_sentences"], 4)
+
+    def test_plain_report_speaks_plainly_and_never_blocks_on_fragmentation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="storyctl-plain-") as directory:
+            project = Path(directory)
+            (project / "大纲").mkdir()
+            (project / "正文").mkdir()
+            (project / "大纲/细纲_第001章.md").write_text(
+                "- 字数目标：1000 字\n- 字数口径：visible_chars_v1\n", encoding="utf-8")
+            (project / "正文/第001章_测试.md").write_text("# 第一章\n" + "短。\n" * 10, encoding="utf-8")
+            _init_tracking(project)
+            with unittest.mock.patch.object(storyctl, "check_blocking_quality", return_value={
+                "status": "pass", "blocking_findings": [], "advisories": [], "semantic_advisories": 0, "tool_errors": []}):
+                result = storyctl.chapter_check(project, 1)
+            lines = storyctl.plain_report(result)
+            text = "\n".join(lines)
+            self.assertIn("字数不在范围里，要请作者定", lines[0])
+            self.assertIn("少了约", text)
+            self.assertIn("短段占 100%（真人平均约 38%，多数章在 16%–62%）", text)
+            self.assertIn("只作参考，不拦", text)
+            for jargon in ("needs_decision", "blocking", "status", "advisory"):
+                self.assertNotIn(jargon, text)
+            completed = subprocess.run(
+                [sys.executable, str(STORYCTL_PATH), "chapter", "check", "--project", str(project), "--chapter", "9", "--plain"],
+                text=True, encoding="utf-8", capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("第 9 章没有细纲", completed.stdout)
+
+    def test_prose_balance_counts_narrative_channels_and_never_blocks(self) -> None:
+        text = (
+            "## 第1章 算账\n"
+            "“我盯着你的指尖，因为我明白你的盘算！”\n"
+            "他伸手拿起桌上的旧账本，指腹摩挲着封皮。\n"
+            "这会儿当众翻脸犯不着，因为东院还没拿到货栈钥匙。\n"
+            "门外的雨越下越大。\n"
+        )
+        balance = storyctl.prose_balance(text)
+        self.assertEqual(balance["narrative_sentences"], 3)
+        self.assertEqual(balance["body_action_sentences"], 1)
+        self.assertAlmostEqual(balance["body_action_sentence_ratio"], 0.333)
+        self.assertEqual(balance["thought_causal_sentences"], 1)
+        self.assertAlmostEqual(balance["thought_causal_sentence_ratio"], 0.333)
+        self.assertEqual(balance["human_reference"]["body_action_sentence_ratio"], 0.12)
+        self.assertEqual(balance["human_reference"]["thought_causal_sentence_ratio"], 0.15)
+
+        with tempfile.TemporaryDirectory(prefix="storyctl-balance-") as directory:
+            project = Path(directory)
+            (project / "大纲").mkdir()
+            (project / "正文").mkdir()
+            (project / "大纲/细纲_第001章.md").write_text(
+                "- 字数目标：200 字\n- 字数口径：visible_chars_v1\n", encoding="utf-8")
+            skewed = "# 第一章\n" + "\n".join(
+                f"他伸手按住桌角第{i}次，目光落在茶盏边缘不说话。" for i in range(1, 10)
+            ) + "\n"
+            (project / "正文/第001章_测试.md").write_text(skewed, encoding="utf-8")
+            _init_tracking(project)
+            with unittest.mock.patch.object(storyctl, "check_blocking_quality", return_value={
+                "status": "pass", "blocking_findings": [], "advisories": [], "semantic_advisories": 0, "tool_errors": []}):
+                result = storyctl.chapter_check(project, 1)
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual(result["prose_balance"]["body_action_sentence_ratio"], 1.0)
+            self.assertEqual(result["prose_balance"]["thought_causal_sentence_ratio"], 0.0)
+            plain = "\n".join(storyctl.plain_report(result))
+            self.assertIn("动作和心里话（只作参考，不拦）", plain)
+            self.assertIn("动作偏密、心里账偏少", plain)
+            for jargon in ("needs_decision", "blocking", "status", "advisory", "prose_balance"):
+                self.assertNotIn(jargon, plain)
+
+
+if __name__ == "__main__":
+    unittest.main()
