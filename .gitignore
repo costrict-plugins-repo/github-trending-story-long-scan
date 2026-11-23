@@ -1,0 +1,19 @@
+.DS_Store
+**/.omc/
+.claude/
+.agents/*
+!.agents/skills
+!.agents/notes
+.codebuddy/
+.codewhale/
+node_modules/
+playwright-report/
+test-results/
+_archive/
+skills-lock.json
+docs/plans/
+__pycache__/
+*.pyc
+
+# 第三方原作正文不入库：拆文 demo 只收录我们生成的分析产物
+demo/拆文库/盘龙/原文/

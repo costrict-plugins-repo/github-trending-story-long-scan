@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "name": "deslop-guide",
+      "source": "skills/story-deslop/references/deslop-guide.md",
+      "targets": [
+        "skills/story-review/references/deslop-guide.md",
+        "skills/story-setup/references/agent-references/deslop-guide.md"
+      ]
+    },
+    {
+      "name": "author-memory-reference",
+      "source": "skills/story-long-write/references/author-memory.md",
+      "targets": [
+        "skills/story-short-write/references/author-memory.md"
+      ]
+    },
+    {
+      "name": "prose-banned-words",
+      "source": "skills/story-deslop/references/banned-words.md",
+      "targets": [
+        "skills/story-review/references/banned-words.md",
+        "skills/story-setup/references/agent-references/banned-words.md"
+      ]
+    },
+    {
+      "name": "long-flow-opening-plan",
+      "source": "skills/story-long-write/references/flow-opening-plan.md",
+      "targets": [
+        "skills/story-setup/references/agent-references/flow-opening-plan.md"
+      ]
+    },
+    {
+      "name": "long-flow-outline",
+      "source": "skills/story-long-write/references/flow-outline.md",
+      "targets": [
+        "skills/story-setup/references/agent-references/flow-outline.md"
+      ]
+    },
+    {
+      "name": "long-flow-drafting",
+      "source": "skills/story-long-write/references/flow-drafting.md",
+      "targets": [
+        "skills/story-setup/references/agent-references/flow-drafting.md"
+      ]
+    },
+    {
+      "name": "long-benchmark-recall",
+      "source": "skills/story-long-write/references/benchmark-recall.md",
+      "targets": [
+        "skills/story-setup/references/agent-references/benchmark-recall.md"
+      ]
+    },
+    {
+      "name": "style-resolution",
+      "source": "skills/story-deslop/references/style-resolution.md",
+      "targets": [
+        "skills/story-review/references/style-resolution.md",
+        "skills/story-setup/references/agent-references/style-resolution.md"
+      ]
+    },
+    {
+      "name": "short-selling-point-protection",
+      "source": "skills/story-deslop/references/short-deslop.md",
+      "targets": [
+        "skills/story-review/references/short-deslop.md",
+        "skills/story-setup/references/agent-references/short-deslop.md"
+      ]
+    }
+  ],
+  "derived_groups": [],
+  "tree_groups": [
+    {
+      "name": "long-genre-styles",
+      "source": "skills/story-long-write/references/genre-styles",
+      "targets": [
+        "skills/story-setup/references/agent-references/genre-styles"
+      ],
+      "files": [
+        "传统玄幻仙侠.md",
+        "双男主.md",
+        "古言宅斗重生.md",
+        "历史架空权谋.md",
+        "年代种田经商.md",
+        "悬疑灵异.md",
+        "末世规则科幻.md",
+        "玄幻脑洞反套路.md",
+        "现言脑洞快穿.md",
+        "西幻游戏同人.md",
+        "豪门虐恋追妻.md",
+        "通用长篇.md",
+        "都市日常神豪.md",
+        "都市脑洞系统.md",
+        "都市高武异能.md",
+        "青春甜宠文娱.md"
+      ]
+    }
+  ]
+}

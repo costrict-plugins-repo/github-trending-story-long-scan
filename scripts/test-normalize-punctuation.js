@@ -1,0 +1,331 @@
+#!/usr/bin/env node
+"use strict";
+
+const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { spawnSync } = require("child_process");
+
+const repoRoot = path.resolve(__dirname, "..");
+const normalizer = path.join(
+  repoRoot,
+  "skills/story-deslop/scripts/normalize-punctuation.js"
+);
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "normalize-punctuation-"));
+
+function run(args) {
+  return spawnSync(process.execPath, [normalizer, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+}
+
+try {
+  const prose = path.join(tmpDir, "prose.md");
+  const original = [
+    "---",
+    "title: fixture",
+    "---",
+    "# 标题",
+    "他说...答案就是这样—真的。",
+    "他站在门口……没动——也没说话。",
+    "10--20",
+    "---",
+    "```text",
+    "围栏内……与---必须保留",
+    "```",
+    "「引号……保留样式」",
+    "",
+  ].join("\r\n");
+  fs.writeFileSync(prose, original, "utf8");
+
+  const check = run(["--check", prose]);
+  assert.strictEqual(check.status, 1, check.stderr);
+  assert.match(check.stdout, /ellipsis/);
+  assert.match(check.stdout, /em-dash/);
+  assert.match(check.stdout, /double-hyphen/);
+  assert.match(check.stdout, /markdown-divider/);
+  assert.strictEqual(fs.readFileSync(prose, "utf8"), original, "--check must not write");
+
+  const write = run([prose]);
+  assert.strictEqual(write.status, 0, write.stderr);
+  const normalized = fs.readFileSync(prose, "utf8");
+  assert(normalized.includes("title: fixture\r\n---"), "frontmatter must remain intact");
+  assert(normalized.includes("围栏内……与---必须保留"), "fenced text must remain intact");
+  assert(normalized.includes("他说……答案就是这样——真的。"), "non-standard ellipsis unified to ……, malformed single — unified to ——");
+  assert(normalized.includes("他站在门口……没动——也没说话。"), "standard narration …… and —— must be preserved");
+  assert(normalized.includes("10到20"), "numeric ranges must use 到");
+  assert(normalized.includes("「引号……保留样式」"), "default mode must keep quote style and quoted ellipsis");
+  assert(!normalized.split("\r\n").includes("---", 3), "body divider must be removed");
+  assert(normalized.includes("\r\n"), "CRLF input must keep CRLF output");
+  const normalizedProse = normalized
+    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/「[^」]*」/g, "");
+  assert(!/(?:\.\.\.|--)/m.test(normalizedProse));
+
+  const second = run([prose]);
+  assert.strictEqual(second.status, 0, second.stderr);
+  assert.match(second.stdout, /Changed files: 0/);
+  assert.strictEqual(fs.readFileSync(prose, "utf8"), normalized, "normalization must be idempotent");
+
+  // 混合行尾：一处孤立 CRLF 不得把全文行尾翻成 CRLF；没有标点问题就必须一个字节都不动，
+  // 否则 --check 报零问题、写入模式却改出整篇 diff，两种模式对不上。
+  const mixedEol = path.join(tmpDir, "mixed-eol.md");
+  const mixedOriginal = "他站在原地。\r\n风很大。\n雨停了。\n";
+  fs.writeFileSync(mixedEol, mixedOriginal, "utf8");
+  const mixedCheck = run(["--check", mixedEol]);
+  assert.strictEqual(mixedCheck.status, 0, mixedCheck.stdout + mixedCheck.stderr);
+  const mixedWrite = run([mixedEol]);
+  assert.strictEqual(mixedWrite.status, 0, mixedWrite.stderr);
+  assert.match(mixedWrite.stdout, /Changed files: 0/);
+  assert.strictEqual(
+    fs.readFileSync(mixedEol, "utf8"),
+    mixedOriginal,
+    "mixed line endings must survive a clean pass byte-for-byte"
+  );
+
+  // 混合行尾 + 真标点问题：只改标点，逐行行尾保持原样。
+  const mixedDirty = path.join(tmpDir, "mixed-eol-dirty.md");
+  fs.writeFileSync(mixedDirty, "他说...真的。\r\n风很大—雨停了。\n", "utf8");
+  assert.strictEqual(run([mixedDirty]).status, 0);
+  assert.strictEqual(
+    fs.readFileSync(mixedDirty, "utf8"),
+    "他说……真的。\r\n风很大——雨停了。\n",
+    "per-line endings must be preserved while punctuation is normalized"
+  );
+
+  // HTML 注释里的 `--` 不是停顿标点：`<!-- 去味:跳过 -->` 豁免标记必须原样留在正文里，
+  // 被改成 `<! 去味:跳过 ，>` 就不再是注释，会当可见文本泄进成稿。
+  const marker = path.join(tmpDir, "marker.md");
+  const markerOriginal = [
+    "# 第12章 雨夜",
+    "<!-- 去味:跳过 -->",
+    "他握紧了拳头，慢慢站起身。",
+    "<!--",
+    "跨行注释里的---与……也照旧",
+    "-->",
+    "正文...继续。<!-- 行内备注 -->",
+    "",
+  ].join("\n");
+  fs.writeFileSync(marker, markerOriginal, "utf8");
+  const markerCheck = run(["--check", marker]);
+  assert.strictEqual(markerCheck.status, 1, markerCheck.stderr);
+  assert.doesNotMatch(markerCheck.stdout, /double-hyphen/, "HTML 注释不得报 double-hyphen");
+  assert.doesNotMatch(markerCheck.stdout, /markdown-divider/, "注释内的 --- 不是正文分隔线");
+  assert.strictEqual(run([marker]).status, 0);
+  const markerNormalized = fs.readFileSync(marker, "utf8");
+  assert(markerNormalized.includes("<!-- 去味:跳过 -->"), "去味豁免标记必须原样保留");
+  assert(markerNormalized.includes("跨行注释里的---与……也照旧"), "跨行注释内容必须原样保留");
+  assert(markerNormalized.includes("<!-- 行内备注 -->"), "行内注释必须原样保留");
+  assert(markerNormalized.includes("正文……继续。"), "注释外的非标省略号仍要归一化");
+
+  // 未闭合注释不是“从这里到 EOF 都合法豁免”：必须具名报错，后续正文仍参与检查/归一化。
+  // 否则一个误写的 `<!--` 会让整篇的非标省略号 / `---` 在 --check 下静默 exit 0。
+  const unclosedComment = path.join(tmpDir, "unclosed-comment.md");
+  fs.writeFileSync(
+    unclosedComment,
+    "# 第13章\n<!-- 临时备注\n正文...继续。\n---\n",
+    "utf8"
+  );
+  const unclosedCheck = run(["--check", unclosedComment]);
+  assert.strictEqual(unclosedCheck.status, 1, unclosedCheck.stdout + unclosedCheck.stderr);
+  assert.match(unclosedCheck.stdout, /html-comment-unclosed/);
+  assert.match(unclosedCheck.stdout, /ellipsis|markdown-divider/);
+  assert.strictEqual(run([unclosedComment]).status, 0);
+  const unclosedNormalized = fs.readFileSync(unclosedComment, "utf8");
+  assert(unclosedNormalized.includes("<!-- 临时备注"), "未闭合注释起始符不应被改坏");
+  assert(unclosedNormalized.includes("正文……继续。"), "未闭合注释后的正文仍须归一化");
+  assert(!unclosedNormalized.includes("\n---\n"), "未闭合注释后的正文分隔线仍须移除");
+
+  // 混粘的半角点/省略号或连字符/破折号一遍必须清干净，不得残留二次可改写的碎标点。
+  const merge = path.join(tmpDir, "merge.md");
+  fs.writeFileSync(merge, "他.……..说\n-——-2.（！）\n", "utf8");
+  assert.strictEqual(run([merge]).status, 0);
+  assert.strictEqual(fs.readFileSync(merge, "utf8"), "他……说\n——2.（！）\n");
+  const mergeRecheck = run(["--check", merge]);
+  assert.strictEqual(mergeRecheck.status, 0, "一遍归一化后 --check 必须已清零: " + mergeRecheck.stdout);
+  assert.match(run([merge]).stdout, /Changed files: 0/);
+
+  // 标准 …… 与 —— 在对话、面板、旁白均保留，非标省略号统一为 ……，非标破折号（—/———/--）统一为 ——。
+  const quoted = path.join(tmpDir, "quoted.md");
+  fs.writeFileSync(
+    quoted,
+    [
+      "“你……你来了。”他站在门口……没动。",
+      "「我...我不是」『好…』【正在加载。。。】",
+      "\"等等——....……\"她说。",
+      "“钥匙在——”他转身，“别动—”\"快走--\"旁白——断了，另一处--也断了。",
+      "“这一段没收口……",
+      "他说完了……”",
+      "“……”",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+  const quotedCheck = run(["--check", quoted]);
+  assert.strictEqual(quotedCheck.status, 1, quotedCheck.stderr);
+  assert.doesNotMatch(quotedCheck.stdout, /quoted\.md:1:/, "already-normalized ellipsis in dialogue and narration must not be reported");
+  assert.doesNotMatch(quotedCheck.stdout, /quoted\.md:4:5:/, "already-normalized —— inside dialogue quotes must not be reported");
+  assert.doesNotMatch(quotedCheck.stdout, /quoted\.md:7:/, "a bare quoted ellipsis must not be reported");
+  assert.strictEqual(run([quoted]).status, 0);
+  assert.strictEqual(
+    fs.readFileSync(quoted, "utf8"),
+    [
+      "“你……你来了。”他站在门口……没动。",
+      "「我……我不是」『好……』【正在加载……】",
+      "\"等等……\"她说。",
+      "“钥匙在——”他转身，“别动——”\"快走——\"旁白——断了，另一处——也断了。",
+      "“这一段没收口……",
+      "他说完了……”",
+      "“……”",
+      "",
+    ].join("\n"),
+    "standard …… and —— kept, malformed dashes/ellipses unified"
+  );
+  assert.strictEqual(run(["--check", quoted]).status, 0, "normalized quoted/narration pauses must pass a recheck");
+
+  const fences = path.join(tmpDir, "fences.md");
+  const fencedOriginal = [
+    "~~~markdown",
+    "tilde 围栏内……必须保留",
+    "```",
+    "不同标记不能关闭——仍须保留",
+    "~~",
+    "更短的波浪线不能关闭--仍须保留",
+    "~~~",
+    "波浪线围栏外...必须—归一化",
+    "````markdown",
+    "```javascript",
+    "四反引号围栏内……必须保留",
+    "```",
+    "较短的反引号不能关闭——仍须保留",
+    "````",
+    "反引号围栏外。。。必须--归一化",
+    "",
+  ].join("\n");
+  fs.writeFileSync(fences, fencedOriginal, "utf8");
+
+  const fencedWrite = run([fences]);
+  assert.strictEqual(fencedWrite.status, 0, fencedWrite.stderr);
+  const fencedNormalized = fs.readFileSync(fences, "utf8");
+  assert(fencedNormalized.includes("tilde 围栏内……必须保留"));
+  assert(fencedNormalized.includes("不同标记不能关闭——仍须保留"));
+  assert(fencedNormalized.includes("更短的波浪线不能关闭--仍须保留"));
+  assert(fencedNormalized.includes("四反引号围栏内……必须保留"));
+  assert(fencedNormalized.includes("较短的反引号不能关闭——仍须保留"));
+  assert(fencedNormalized.includes("波浪线围栏外……必须——归一化"));
+  assert(fencedNormalized.includes("反引号围栏外……必须——归一化"));
+
+  const curly = path.join(tmpDir, "curly.md");
+  fs.writeFileSync(curly, '"甲"与「乙『丙』」 don\'t \'内嵌\'\n', "utf8");
+  assert.strictEqual(run(["--quote-mode=curly", curly]).status, 0);
+  assert.strictEqual(fs.readFileSync(curly, "utf8"), "“甲”与“乙‘丙’” don't ‘内嵌’\n");
+
+  // --quote-mode=curly 必须保护单行/跨行 HTML 注释与白名单字面量，并跨行延续引号栈。
+  const curlyMultiline = path.join(tmpDir, "curly-multiline.md");
+  fs.writeFileSync(
+    curlyMultiline,
+    '<!-- "comment" -->\n<!--\n"跨行注释"\n-->\n"第一段没收口\n第二段收口"\n',
+    "utf8"
+  );
+  assert.strictEqual(run(["--quote-mode=curly", curlyMultiline]).status, 0);
+  assert.strictEqual(
+    fs.readFileSync(curlyMultiline, "utf8"),
+    '<!-- "comment" -->\n<!--\n"跨行注释"\n-->\n“第一段没收口\n第二段收口”\n',
+    "curly mode must preserve HTML comments and close multi-line quotes cleanly"
+  );
+  assert.strictEqual(
+    run(["--check", "--quote-mode=curly", curlyMultiline]).status,
+    0,
+    "normalized multi-line curly quotes with HTML comments must pass --check idempotently"
+  );
+
+  // 白名单字面量中的引号在 quote-mode 下同样受保护。
+  const whitelistDir = path.join(tmpDir, "wl-book");
+  fs.mkdirSync(whitelistDir, { recursive: true });
+  fs.writeFileSync(path.join(whitelistDir, ".deslop-whitelist"), '"KEEP_RAW"\n', "utf8");
+  const wlFile = path.join(whitelistDir, "chapter.md");
+  fs.writeFileSync(wlFile, '系统弹出 "KEEP_RAW" 后，他说"走吧"。\n', "utf8");
+  assert.strictEqual(run(["--quote-mode=curly", wlFile]).status, 0);
+  assert.strictEqual(
+    fs.readFileSync(wlFile, "utf8"),
+    '系统弹出 "KEEP_RAW" 后，他说“走吧”。\n',
+    "style-whitelist spans must remain untouched in quote-mode"
+  );
+
+  const ascii = path.join(tmpDir, "ascii.md");
+  fs.writeFileSync(ascii, "<!-- “保留注释” -->\n「甲」与“乙”\n", "utf8");
+  assert.strictEqual(run(["--quote-mode=ascii", ascii]).status, 0);
+  assert.strictEqual(fs.readFileSync(ascii, "utf8"), '<!-- “保留注释” -->\n"甲"与"乙"\n');
+
+  const yan = path.join(tmpDir, "yan.md");
+  fs.writeFileSync(yan, '<!-- "保留注释" -->\n"甲"和“乙”\n', "utf8");
+  assert.strictEqual(run(["--quote-mode", "yan", yan]).status, 0);
+  assert.strictEqual(fs.readFileSync(yan, "utf8"), '<!-- "保留注释" -->\n「甲」和「乙」\n');
+
+  const missing = run([path.join(tmpDir, "missing.md")]);
+  assert.strictEqual(missing.status, 2);
+  assert.match(missing.stderr, /unable to read/);
+
+  // 短篇模式（--mode=short 与 --mode=auto 自动识别）：保留旁白标准 ——，统一非标 —/———/-- 为 ——，数字范围仍转「到」。
+  const shortBook = path.join(tmpDir, "short-book");
+  fs.mkdirSync(shortBook, { recursive: true });
+  fs.writeFileSync(path.join(shortBook, "设定.md"), "# 设定\n", "utf8");
+  const shortClean = path.join(shortBook, "正文.md");
+  const shortCleanText = "他推开门——屋里空无一人。\n“等等——”她喊住他。\n10到20米外有人影。\n";
+  fs.writeFileSync(shortClean, shortCleanText, "utf8");
+  const shortAutoCheck = run(["--check", shortClean]);
+  assert.strictEqual(shortAutoCheck.status, 0, "auto short mode must keep standard narration ——: " + shortAutoCheck.stdout);
+  const shortAutoWrite = run([shortClean]);
+  assert.strictEqual(shortAutoWrite.status, 0, shortAutoWrite.stderr);
+  assert.match(shortAutoWrite.stdout, /Changed files: 0/);
+  assert.strictEqual(fs.readFileSync(shortClean, "utf8"), shortCleanText);
+
+  // 显式 --mode=long 同样保留标准旁白 ——（不再误杀长篇系统提示/拖音），仅统一非标 —/———/-- 为 ——。
+  const forceLongCheck = run(["--mode=long", "--check", shortClean]);
+  assert.strictEqual(forceLongCheck.status, 0, "--mode=long must also preserve standard narration ——");
+
+  // 短篇模式下非标破折号与双连字符统一为 ——，数字范围 10--20 仍转为 10到20，--- 分隔线和 ... 省略号照常处理。
+  const shortDirty = path.join(tmpDir, "short-dirty.md");
+  fs.writeFileSync(
+    shortDirty,
+    [
+      "他说...真相就在这里——没人反驳。",
+      "门开了—他站在门外———她退了一步--灯灭了。",
+      "10--20分钟后。",
+      "---",
+      "“别走—”他拉住她。",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+  const shortDirtyCheck = run(["--mode=short", "--check", shortDirty]);
+  assert.strictEqual(shortDirtyCheck.status, 1, shortDirtyCheck.stderr);
+  assert.match(shortDirtyCheck.stdout, /ellipsis/);
+  assert.match(shortDirtyCheck.stdout, /em-dash/);
+  assert.match(shortDirtyCheck.stdout, /double-hyphen/);
+  assert.match(shortDirtyCheck.stdout, /markdown-divider/);
+  assert.strictEqual(run(["--mode=short", shortDirty]).status, 0);
+  assert.strictEqual(
+    fs.readFileSync(shortDirty, "utf8"),
+    [
+      "他说……真相就在这里——没人反驳。",
+      "门开了——他站在门外——她退了一步——灯灭了。",
+      "10到20分钟后。",
+      "“别走——”他拉住她。",
+      "",
+    ].join("\n"),
+    "short mode must preserve standard —— and unify non-standard dashes to ——"
+  );
+  assert.strictEqual(run(["--mode=short", "--check", shortDirty]).status, 0, "short mode normalization must be idempotent");
+  assert.match(run(["--mode=short", shortDirty]).stdout, /Changed files: 0/);
+
+  // 非法 --mode 返回退出码 2。
+  assert.strictEqual(run(["--mode=invalid", shortDirty]).status, 2);
+
+  console.log("OK: punctuation normalizer check/write, quoted ellipsis, robust fences, CRLF, quote modes, short mode, and errors");
+} finally {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
